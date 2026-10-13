@@ -114,6 +114,8 @@ internal static class CaptureRunner
                 await Capture(window, $"editor-{sample.Id}-{suffix}");
             }
 
+            if (mode == AppTheme.Light && Wanted(only, "smoke")) await Smoke(window);
+
             if (mode == AppTheme.Light && Wanted(only, "theme"))
             {
                 // One deck in every theme.
@@ -199,6 +201,92 @@ internal static class CaptureRunner
             window.Close();
             await Settle(300);
         }
+    }
+
+    /// <summary>
+    /// Runs (almost) every editor command on a new deck, then undoes and redoes them all, and writes smoke.txt with
+    /// anything that threw. Dialogs that commands open (chart, table, section name) are accepted through UI
+    /// Automation on our own window; nothing touches the clipboard, files or the screen.
+    /// </summary>
+    private static async Task Smoke(MainWindow window)
+    {
+        var report = new List<string>();
+        var deck = DeckOperations.NewDeck(ThemeCatalog.Default);
+        window.ShowEditor(new DeckSession(deck, new Core.Rendering.MediaStore()));
+        await Settle(600);
+        var editor = window.Editor!;
+
+        var accept = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        accept.Tick += (_, _) =>
+        {
+            foreach (var w in Application.Current.Windows.OfType<Window>().Where(w => w is ChartEditorDialog or TableEditorDialog or InputDialog).ToList())
+            {
+                MoveOffscreen(w);
+                var button = FindChild<System.Windows.Controls.Button>(w, b => b.IsDefault || b.Content as string == "Done");
+                if (button != null && new System.Windows.Automation.Peers.ButtonAutomationPeer(button).GetPattern(System.Windows.Automation.Peers.PatternInterface.Invoke)
+                        is System.Windows.Automation.Provider.IInvokeProvider invoke)
+                    invoke.Invoke();
+            }
+        };
+        accept.Start();
+
+        // Not run: clipboard, files, windows of their own, the slide show and app-wide settings.
+        var skip = new HashSet<string>
+        {
+            "Cut", "Copy", "Paste", "Picture…", "Icon…", "Background picture…", "Command palette", "Slide size: custom…",
+            "Present from the beginning", "Present from this slide", "Presenter view on this screen", "Rehearse timings",
+            // These two are saved in the settings.
+            "Show or hide speaker notes", "Turn smart guides on or off",
+        };
+        var order = new[] { "Insert", "Arrange", "Text", "Edit", "Slide", "Layout", "Transition", "Design", "Theme", "View", "Present" };
+        var commands = editor.Commands.Where(c => order.Contains(c.Category) && !skip.Contains(c.Title)).OrderBy(c => Array.IndexOf(order, c.Category)).ToList();
+        var themes = 0;
+        var ran = 0;
+        foreach (var command in commands)
+        {
+            if (command.Category == "Theme" && ++themes > 4) continue;
+            if (editor.SlideCanvas.IsEditingText) editor.SlideCanvas.CommitTextEdit();
+            // Most commands work on a selection: select everything on the slide first (except for Insert).
+            if (command.Category != "Insert" && editor.State.CurrentSlide is { } slide)
+                editor.State.Select(slide.Elements.Where(e => e.Placeholder != "decor").Select(e => e.Id));
+            File.AppendAllText(Path.Combine(s_folder, "smoke-progress.txt"), command.Category + " › " + command.Title + Environment.NewLine);
+            try
+            {
+                if (!command.CanExecute()) continue;
+                command.Execute();
+                ran++;
+            }
+            catch (Exception ex)
+            {
+                report.Add($"{command.Category} › {command.Title}: {ex.GetType().Name}: {ex.Message}");
+                Log.Error(ex, "Smoke " + command.Title);
+            }
+            await Settle(40);
+        }
+        if (editor.SlideCanvas.IsEditingText) editor.SlideCanvas.CommitTextEdit();
+        await Settle(600);
+
+        var history = window.Session!.History;
+        var steps = history.Count;
+        try
+        {
+            while (history.CanUndo) history.Undo();
+            await Settle(200);
+            while (history.CanRedo) history.Redo();
+        }
+        catch (Exception ex)
+        {
+            report.Add($"Undo / redo: {ex.GetType().Name}: {ex.Message}");
+            Log.Error(ex, "Smoke undo / redo");
+        }
+        accept.Stop();
+        await Settle(500);
+        report.Insert(0, $"{ran} commands ran, {steps} undo steps, {window.Session.Deck.Slides.Count} slides, {report.Count} problems");
+        File.WriteAllLines(Path.Combine(s_folder, "smoke.txt"), report);
+        editor.SetView(0);
+        await Settle(400);
+        await Capture(window, "smoke");
+        history.Clear();
     }
 
     private static MainWindow NewWindow()

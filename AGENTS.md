@@ -74,14 +74,14 @@ Stagecraft is a free Windows presentation app ("like PowerPoint, but simpler and
 - Update now downloads this edition's installer to `%TEMP%\Stagecraft-Update`, checks size and SHA-256, runs it with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RELAUNCH=1 /CURRENTUSER|/ALLUSERS /DIR=…` and exits; the installer removes the old program files (`[InstallDelete]`, only in a folder named Stagecraft holding Stagecraft.exe) and starts `Stagecraft.exe --updated`. Leftover installers are deleted on the next start.
 
 ## Command line
-`Stagecraft.exe [file.stagecraft | file.pptx]…`, `--present <file>`, `--present-windowed <file>` (test mode), `--slide N`, `--export-pdf <file> <out.pdf>` (no window), `--settings`, `--solo` (don't hand over to a running Stagecraft), hidden `--capture <folder>` (screenshots of Stagecraft's own windows, off screen; `STAGECRAFT_CAPTURE_ONLY=start,editor,theme,ui,file` and `STAGECRAFT_CAPTURE_FILE=<deck>`).
+`Stagecraft.exe [file.stagecraft | file.pptx]…`, `--present <file>`, `--present-windowed <file>` (test mode), `--slide N`, `--export-pdf <file> <out.pdf>` (no window), `--settings`, `--solo` (don't hand over to a running Stagecraft), hidden `--capture <folder>` (screenshots of Stagecraft's own windows, off screen; `STAGECRAFT_CAPTURE_ONLY=start,editor,smoke,theme,ui,file` and `STAGECRAFT_CAPTURE_FILE=<deck>`; `smoke` runs almost every editor command, then undoes and redoes them all, and writes `smoke.txt`).
 
 ## Testing on the owner's PC (be careful)
 - The owner uses VibePlayer, PawSip and Trove daily: never close or touch them, and don't change their file associations.
 - Never open windows over a full-screen app (check `SHQueryUserNotificationState`; `--capture` waits by itself). Never run a full-screen slide show (see above).
 - Don't send keystrokes to "whatever is in front" (SendKeys / keybd_event / SendInput): post messages only to windows of the Stagecraft process (check the PID) or use UI Automation patterns. Capture screenshots with PrintWindow on Stagecraft's own windows, never screen regions (notifications end up in screen captures).
 - Back up `%APPDATA%\Stagecraft` before tests that write settings and restore it afterwards (if it didn't exist, delete it).
-- Installer tests: install per-user into a scratch folder (`/CURRENTUSER /DIR=… /TASKS="fileassoc"`), check the HKCU keys, run the association's command line directly, then uninstall silently and check that files, keys and shortcuts are gone.
+- Installer tests: install per-user into a scratch folder (`/CURRENTUSER /DIR=… /TASKS="fileassoc"`), check the HKCU keys, run the association's command line directly with `STAGECRAFT_TEST_OFFSCREEN=1` (windows open off screen and never take the focus; the opened file is logged in `info.log`), close it with WM_CLOSE to that process's own window, then uninstall silently and check that files, keys and shortcuts are gone.
 - The engine tests write only under `%TEMP%\stagecraft-tests-*` and delete it.
 
 ## Git and writing rules

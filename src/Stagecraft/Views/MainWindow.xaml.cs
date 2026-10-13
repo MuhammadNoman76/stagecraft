@@ -35,6 +35,9 @@ public partial class MainWindow
         };
     }
 
+    /// <summary>STAGECRAFT_TEST_OFFSCREEN=1: windows open off screen and never take the focus (automated tests).</summary>
+    public static bool IsTestOffscreen { get; } = Environment.GetEnvironmentVariable("STAGECRAFT_TEST_OFFSCREEN") == "1";
+
     public DeckSession? Session => _editor?.Session;
     public EditorView? Editor => _editor;
     public StartView? Start => _start;
@@ -76,6 +79,7 @@ public partial class MainWindow
 
     public void BringToFront()
     {
+        if (IsTestOffscreen) return; // test hook: never take the focus
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
         Focus();
@@ -98,6 +102,7 @@ public partial class MainWindow
 
         var session = new DeckSession(doc.Deck, doc.Media, import ? null : path);
         ShowEditor(session);
+        Log.Info($"{(import ? "Imported" : "Opened")} {path} ({session.Deck.Slides.Count} slides)");
         if (import)
         {
             session.Deck.Title = Path.GetFileNameWithoutExtension(path);
@@ -234,6 +239,16 @@ public partial class MainWindow
 
     private void RestorePlacement()
     {
+        // Hidden test hook (installer and association tests): open off screen, without taking the focus.
+        if (IsTestOffscreen)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = SystemParameters.VirtualScreenLeft - 3200;
+            Top = SystemParameters.VirtualScreenTop + 20;
+            ShowActivated = false;
+            ShowInTaskbar = false;
+            return;
+        }
         var placement = AppSettings.Current.Window;
         if (placement == null || placement.Width < MinWidth || placement.Height < MinHeight) return;
         var screen = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop, SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);

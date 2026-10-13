@@ -8,6 +8,11 @@ Stagecraft is a free presentation app for Windows. Pick a theme, type your talk,
 
 ![The Stagecraft editor](docs/screenshots/editor-light.png)
 
+| | |
+|---|---|
+| ![Start screen with the ten themes](docs/screenshots/start-light.png) | ![Design panel in dark mode](docs/screenshots/design-dark.png) |
+| ![Slide sorter](docs/screenshots/sorter-light.png) | ![Presenter view](docs/screenshots/presenter-dark.png) |
+
 ## What's in 1.0
 
 **Beautiful by default**
@@ -33,7 +38,7 @@ Stagecraft is a free presentation app for Windows. Pick a theme, type your talk,
 **Smooth animation**
 - Transitions: Fade, Push, Slide over, Zoom and **Morph**. Morph matches the same object on two slides (a duplicated slide keeps each object's identity; otherwise matching names, same content or the same layout slot) and glides position, size, rotation, opacity, colour and corner radius; text that changes cross-fades.
 - Builds: appear, fade, rise, scale and wipe, with order and delay, previewable in the editor.
-- Everything is GPU-composited and eased for 60 fps.
+- Transitions and builds are eased and drawn by the GPU at the display's frame rate.
 
 **Presenting**
 - With two displays: the slides on the second screen, the presenter view on yours (current and next slide, notes with adjustable size, elapsed time and clock, slide grid).
@@ -44,7 +49,7 @@ Stagecraft is a free presentation app for Windows. Pick a theme, type your talk,
 **Safe with your work**
 - Saving writes a complete new file and checks it before replacing the old one, so a crash or a full disk can't leave a half-written presentation.
 - A recovery copy of unsaved work every few minutes (Settings); if Stagecraft closes unexpectedly, the start screen offers it back.
-- Start screen with themes, three sample decks and your recent presentations with thumbnails.
+- Start screen with themes, three sample decks (also in [`samples/`](samples)) and your recent presentations with thumbnails.
 
 ## The .stagecraft format
 A `.stagecraft` file is a ZIP archive:
@@ -66,10 +71,10 @@ The command line can export without opening a window: `Stagecraft.exe --export-p
 ## Download
 | Windows version | Installer | Size |
 |---|---|---|
-| Windows 10 / 11 (64-bit) | [Stagecraft-Setup-1.0.0-x64.exe](release/Stagecraft-Setup-1.0.0-x64.exe) | SIZE_X64 |
-| Windows 10 / 11 on ARM | [Stagecraft-Setup-1.0.0-arm64.exe](release/Stagecraft-Setup-1.0.0-arm64.exe) | SIZE_ARM64 |
-| Windows 10 (32-bit) | [Stagecraft-Setup-1.0.0-x86.exe](release/Stagecraft-Setup-1.0.0-x86.exe) | SIZE_X86 |
-| Windows 7 SP1 / 8.1 | [Stagecraft-Setup-1.0.0-win7-8.exe](release/Stagecraft-Setup-1.0.0-win7-8.exe) | SIZE_WIN78 |
+| Windows 10 / 11 (64-bit) | [Stagecraft-Setup-1.0.0-x64.exe](release/Stagecraft-Setup-1.0.0-x64.exe) | 45.8 MB |
+| Windows 10 / 11 on ARM | [Stagecraft-Setup-1.0.0-arm64.exe](release/Stagecraft-Setup-1.0.0-arm64.exe) | 40.6 MB |
+| Windows 10 (32-bit) | [Stagecraft-Setup-1.0.0-x86.exe](release/Stagecraft-Setup-1.0.0-x86.exe) | 42.1 MB |
+| Windows 7 SP1 / 8.1 | [Stagecraft-Setup-1.0.0-win7-8.exe](release/Stagecraft-Setup-1.0.0-win7-8.exe) | 5.6 MB |
 
 SHA-256 checksums are in [release/SHA256SUMS.txt](release/SHA256SUMS.txt). The Windows 10 / 11 editions include everything they need. The Windows 7 / 8.1 edition needs Microsoft .NET Framework 4.8 (the installer checks and links to Microsoft's download).
 
@@ -77,7 +82,7 @@ Setup installs for all users by default; choose "Install for me only" if you don
 
 **Windows SmartScreen:** the installers aren't code-signed yet, so Windows may show "Windows protected your PC" the first time. Click **More info**, then **Run anyway**. You can check the download against `SHA256SUMS.txt` first.
 
-**Not tested yet:** ARM64 hardware (the ARM64 edition is built and checked for size only), real Windows 7 / 8.1 PCs (the Windows 7 / 8.1 edition was tested on Windows 11 with .NET Framework 4.8), and a real two-display slide show (the screen logic was tested with the windowed test mode).
+**Not tested yet:** ARM64 hardware (the ARM64 edition is built but hasn't run on a real ARM PC), real Windows 7 / 8.1 and 32-bit Windows 10 PCs (those editions were tested on 64-bit Windows 11), and a slide show on a real second display (it was tested in the windowed test mode).
 
 ## Updates
 Stagecraft checks for a new version about 10 seconds after it starts and then at most once a day. When there is one, it offers **Update now**, **Later** or **Skip this version**. Update now downloads the installer for your edition, checks its size and SHA-256 checksum, installs it quietly and starts Stagecraft again. You can turn the check off in Settings.
