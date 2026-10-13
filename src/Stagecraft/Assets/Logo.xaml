@@ -1,0 +1,69 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        Stagecraft's mark: a spotlight shining on a stage, on a violet-to-coral tile (256 x 256 design grid).
+        tools\make-icon.ps1 renders Stagecraft.ico, StagecraftDeck.ico and docs\icon.png from these drawings.
+        Logo.Small is a bolder version for 16-24 px.
+    -->
+    <DrawingImage x:Key="Logo.Mark">
+        <DrawingImage.Drawing>
+            <DrawingGroup>
+                <!-- invisible frame keeps the 256 x 256 bounds -->
+                <GeometryDrawing Brush="#00000000" Geometry="M 0,0 H 256 V 256 H 0 Z" />
+                <!-- tile -->
+                <GeometryDrawing Geometry="M 64,10 H 192 C 222,10 246,34 246,64 V 192 C 246,222 222,246 192,246 H 64 C 34,246 10,222 10,192 V 64 C 10,34 34,10 64,10 Z">
+                    <GeometryDrawing.Brush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#6D4CFF" Offset="0" />
+                            <GradientStop Color="#A24BEB" Offset="0.5" />
+                            <GradientStop Color="#FF5E7E" Offset="1" />
+                        </LinearGradientBrush>
+                    </GeometryDrawing.Brush>
+                </GeometryDrawing>
+                <!-- soft sheen at the top -->
+                <GeometryDrawing Geometry="M 64,10 H 192 C 222,10 246,34 246,64 V 110 C 180,96 90,96 10,118 V 64 C 10,34 34,10 64,10 Z">
+                    <GeometryDrawing.Brush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#33FFFFFF" Offset="0" />
+                            <GradientStop Color="#00FFFFFF" Offset="1" />
+                        </LinearGradientBrush>
+                    </GeometryDrawing.Brush>
+                </GeometryDrawing>
+                <!-- light beam -->
+                <GeometryDrawing Geometry="M 112,66 H 144 L 204,178 H 52 Z">
+                    <GeometryDrawing.Brush>
+                        <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
+                            <GradientStop Color="#B3FFFFFF" Offset="0" />
+                            <GradientStop Color="#33FFFFFF" Offset="1" />
+                        </LinearGradientBrush>
+                    </GeometryDrawing.Brush>
+                </GeometryDrawing>
+                <!-- lamp -->
+                <GeometryDrawing Brush="#FFFFFF" Geometry="M 104,44 H 152 C 158.6,44 164,49.4 164,56 V 58 C 164,64.6 158.6,70 152,70 H 104 C 97.4,70 92,64.6 92,58 V 56 C 92,49.4 97.4,44 104,44 Z" />
+                <!-- pool of light on the stage -->
+                <GeometryDrawing Brush="#FFF3C4" Geometry="M 128,166 C 168,166 200,171.4 200,178 C 200,184.6 168,190 128,190 C 88,190 56,184.6 56,178 C 56,171.4 88,166 128,166 Z" />
+                <!-- stage -->
+                <GeometryDrawing Brush="#FFFFFF" Geometry="M 50,186 H 206 C 213.7,186 220,192.3 220,200 V 202 C 220,209.7 213.7,216 206,216 H 50 C 42.3,216 36,209.7 36,202 V 200 C 36,192.3 42.3,186 50,186 Z" />
+            </DrawingGroup>
+        </DrawingImage.Drawing>
+    </DrawingImage>
+
+    <DrawingImage x:Key="Logo.Small">
+        <DrawingImage.Drawing>
+            <DrawingGroup>
+                <GeometryDrawing Brush="#00000000" Geometry="M 0,0 H 256 V 256 H 0 Z" />
+                <GeometryDrawing Geometry="M 56,4 H 200 C 229,4 252,27 252,56 V 200 C 252,229 229,252 200,252 H 56 C 27,252 4,229 4,200 V 56 C 4,27 27,4 56,4 Z">
+                    <GeometryDrawing.Brush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#6D4CFF" Offset="0" />
+                            <GradientStop Color="#FF5E7E" Offset="1" />
+                        </LinearGradientBrush>
+                    </GeometryDrawing.Brush>
+                </GeometryDrawing>
+                <GeometryDrawing Geometry="M 104,62 H 152 L 214,170 H 42 Z" Brush="#99FFFFFF" />
+                <GeometryDrawing Brush="#FFFFFF" Geometry="M 94,30 H 162 C 170.8,30 178,37.2 178,46 V 54 C 178,62.8 170.8,70 162,70 H 94 C 85.2,70 78,62.8 78,54 V 46 C 78,37.2 85.2,30 94,30 Z" />
+                <GeometryDrawing Brush="#FFFFFF" Geometry="M 46,176 H 210 C 220.5,176 229,184.5 229,195 V 203 C 229,213.5 220.5,222 210,222 H 46 C 35.5,222 27,213.5 27,203 V 195 C 27,184.5 35.5,176 46,176 Z" />
+            </DrawingGroup>
+        </DrawingImage.Drawing>
+    </DrawingImage>
+</ResourceDictionary>
