@@ -36,6 +36,9 @@ public sealed class AppSettings
     /// <summary>Minutes between recovery snapshots of unsaved work (0 = off).</summary>
     public int AutosaveMinutes { get; set; } = 2;
 
+    /// <summary>Saves decks that have a file a few seconds after editing pauses (new decks are never saved automatically).</summary>
+    public bool AutoSaveFile { get; set; } = true;
+
     // Updates (see Updater): check the feed now and then, remember when, and a version the user chose to skip.
     public bool CheckForUpdates { get; set; } = true;
     public DateTime? LastUpdateCheck { get; set; }
@@ -45,6 +48,12 @@ public sealed class AppSettings
     public bool ShowNotes { get; set; } = true;
     public double NotesHeight { get; set; } = 132;
     public bool SnapToGuides { get; set; } = true;
+    public bool SpellCheck { get; set; } = true;
+    public bool ShowRulers { get; set; }
+    public bool ShowGrid { get; set; }
+    public bool SnapToGrid { get; set; }
+    /// <summary>Grid spacing in slide units (1920 × 1080 slide; 40 = 1/48 of the width).</summary>
+    public double GridSize { get; set; } = 40;
     public string? LastTheme { get; set; }
     public string? LastVariant { get; set; }
 
@@ -88,6 +97,16 @@ public sealed class AppSettings
     /// <summary>Applies <paramref name="change"/> to the latest settings on disk and saves them.</summary>
     public static void Update(Action<AppSettings> change)
     {
+        // Automated test runs (off-screen windows, screenshots) change settings in memory only: the user's
+        // settings file is never written by them.
+        if (Views.MainWindow.IsTestOffscreen || CaptureRunner.Running)
+        {
+            var current = Current;
+            change(current);
+            current.Normalize();
+            Changed?.Invoke();
+            return;
+        }
         try
         {
             WithFileLock<object>(() =>
@@ -165,6 +184,7 @@ public sealed class AppSettings
         if (AutosaveMinutes < 0 || AutosaveMinutes > 60) AutosaveMinutes = 2;
         if (PresenterNotesSize < 10 || PresenterNotesSize > 64) PresenterNotesSize = 20;
         if (NotesHeight < 60 || NotesHeight > 600) NotesHeight = 132;
+        if (double.IsNaN(GridSize) || GridSize < 5 || GridSize > 400) GridSize = 40;
         AudienceDisplay ??= "";
     }
 }

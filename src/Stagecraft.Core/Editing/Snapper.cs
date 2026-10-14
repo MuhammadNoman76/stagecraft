@@ -2,7 +2,7 @@ using System.Windows;
 
 namespace Stagecraft.Core.Editing;
 
-public enum GuideKind { Edge, Center, Slide, Spacing }
+public enum GuideKind { Edge, Center, Slide, Spacing, User }
 
 /// <summary>A guide line drawn while something snaps (slide units).</summary>
 public sealed class Guide
@@ -40,6 +40,15 @@ public sealed class SnapTargets
     public IReadOnlyList<Rect> Others { get; }
     public Size Slide { get; }
     public double Margin { get; }
+
+    /// <summary>Smart guides: other elements, the slide's edges, centre and margins, equal spacing.</summary>
+    public bool Smart { get; init; } = true;
+
+    /// <summary>The presentation's own guides (View › guides): always snapped to.</summary>
+    public IReadOnlyList<Model.GuideLine> UserGuides { get; init; } = Array.Empty<Model.GuideLine>();
+
+    /// <summary>Grid spacing to snap to (0 = no grid). Smart guides and user guides win when they're close.</summary>
+    public double Grid { get; init; }
 }
 
 /// <summary>
@@ -74,7 +83,7 @@ public static class Snapper
         if (snapX)
         {
             var edge = BestEdge(moving, targets, threshold, horizontal: true, edges: new[] { Edge.Start, Edge.Center, Edge.End });
-            var spacing = BestSpacing(moving, targets, threshold, horizontal: true);
+            var spacing = targets.Smart ? BestSpacing(moving, targets, threshold, horizontal: true) : null;
             if (spacing != null && (edge == null || Math.Abs(spacing.Value.Delta) < Math.Abs(edge.Value.Delta) - 0.01))
             {
                 dx = spacing.Value.Delta;
@@ -90,7 +99,7 @@ public static class Snapper
         if (snapY)
         {
             var edge = BestEdge(moving, targets, threshold, horizontal: false, edges: new[] { Edge.Start, Edge.Center, Edge.End });
-            var spacing = BestSpacing(moving, targets, threshold, horizontal: false);
+            var spacing = targets.Smart ? BestSpacing(moving, targets, threshold, horizontal: false) : null;
             if (spacing != null && (edge == null || Math.Abs(spacing.Value.Delta) < Math.Abs(edge.Value.Delta) - 0.01))
             {
                 dy = spacing.Value.Delta;
@@ -104,6 +113,17 @@ public static class Snapper
             }
         }
 
+        // Nothing close: the grid (the box's left and top edges go to the nearest grid line).
+        if (snapX && !sx && targets.Grid > 0)
+        {
+            dx = GridDelta(moving.Left, targets.Grid);
+            sx = true;
+        }
+        if (snapY && !sy && targets.Grid > 0)
+        {
+            dy = GridDelta(moving.Top, targets.Grid);
+            sy = true;
+        }
         var snapped = new Rect(moving.X + dx, moving.Y + dy, moving.Width, moving.Height);
         if (sx && !guides.Any(g => g.Kind == GuideKind.Spacing && !g.Vertical)) guides.AddRange(LinesAt(snapped, targets, vertical: true));
         if (sy && !guides.Any(g => g.Kind == GuideKind.Spacing && g.Vertical)) guides.AddRange(LinesAt(snapped, targets, vertical: false));
@@ -136,6 +156,16 @@ public static class Snapper
                 sy = true;
             }
         }
+        if (horizontalEdge != 0 && !sx && targets.Grid > 0)
+        {
+            dx = GridDelta(horizontalEdge < 0 ? box.Left : box.Right, targets.Grid);
+            sx = true;
+        }
+        if (verticalEdge != 0 && !sy && targets.Grid > 0)
+        {
+            dy = GridDelta(verticalEdge < 0 ? box.Top : box.Bottom, targets.Grid);
+            sy = true;
+        }
         var snapped = box;
         if (sx)
         {
@@ -155,6 +185,9 @@ public static class Snapper
 
     private static IEnumerable<Candidate> Candidates(SnapTargets t, bool horizontal)
     {
+        foreach (var g in t.UserGuides)
+            if (g.Vertical == horizontal) yield return new Candidate(g.Position, GuideKind.User, null);
+        if (!t.Smart) yield break;
         var size = horizontal ? t.Slide.Width : t.Slide.Height;
         yield return new Candidate(0, GuideKind.Slide, null);
         yield return new Candidate(size / 2, GuideKind.Slide, null);
@@ -171,6 +204,9 @@ public static class Snapper
             yield return new Candidate(horizontal ? r.Right : r.Bottom, GuideKind.Edge, r);
         }
     }
+
+    /// <summary>How far <paramref name="value"/> is from the nearest grid line.</summary>
+    public static double GridDelta(double value, double grid) => grid > 0 ? Math.Round(value / grid) * grid - value : 0;
 
     private static double EdgeValue(Rect r, Edge e, bool horizontal) => (horizontal, e) switch
     {

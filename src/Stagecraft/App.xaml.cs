@@ -39,6 +39,18 @@ public partial class App
             Log.Error(args.Exception, "Task");
             args.SetObserved();
         };
+        // Videos and sounds of decks open in Stagecraft copies that crashed or were killed.
+        Task.Run(() =>
+        {
+            try
+            {
+                Core.Rendering.MediaCache.CleanStale();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Clean the media cache");
+            }
+        });
 
         try
         {
@@ -77,6 +89,19 @@ public partial class App
             MessageBox.Show("Stagecraft couldn't start:\n\n" + ex.Message, "Stagecraft", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            Core.Rendering.MediaCache.DeleteOwnFolder();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Delete the media cache");
+        }
+        base.OnExit(e);
     }
 
     /// <summary>Another launch handed us its command line.</summary>

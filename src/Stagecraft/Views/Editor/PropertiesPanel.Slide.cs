@@ -151,6 +151,8 @@ public sealed partial class PropertiesPanel
             if (e.Key == System.Windows.Input.Key.Enter) editor.SetSection(sectionBox.Text);
         };
         Row(opts, "Section", sectionBox);
+        var hf = _state!.Deck.Footer;
+        opts.Children.Add(TextButton(hf.Any ? "Header and footer: " + FooterSummary(hf) : "Header and footer…", "Icon.DocumentHeaderFooter", () => editor.EditHeaderFooter()));
         if (slide.RehearsedSeconds is { } secs)
         {
             var t = TimeSpan.FromSeconds(secs);
@@ -160,6 +162,15 @@ public sealed partial class PropertiesPanel
         }
     }
 
+
+    private static string FooterSummary(Core.Model.HeaderFooter f)
+    {
+        var parts = new List<string>();
+        if (f.SlideNumber) parts.Add("numbers");
+        if (f.Date) parts.Add("date");
+        if (!string.IsNullOrWhiteSpace(f.Text)) parts.Add("text");
+        return string.Join(", ", parts);
+    }
     // ------------------------------------------------------------------ design (themes, palettes, size)
 
     private void BuildDesign()

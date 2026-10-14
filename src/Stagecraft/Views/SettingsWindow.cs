@@ -41,6 +41,8 @@ public sealed class SettingsWindow : FluentWindow
             }, "App theme")));
 
         Header(stack, "Editing");
+        stack.Children.Add(Row("Icon.Save", "Save automatically", "Saves your presentation a few seconds after you stop editing. New presentations are saved automatically once you've saved them the first time.",
+            Switch(s.AutoSaveFile, on => AppSettings.Update(x => x.AutoSaveFile = on), "Save automatically")));
         var autosaveValues = new[] { 0, 1, 2, 5, 10 };
         stack.Children.Add(Row("Icon.History", "Keep a recovery copy", "If Stagecraft closes unexpectedly, unsaved work can be recovered from the start screen.",
             Combo(new[] { "Off", "Every minute", "Every 2 minutes", "Every 5 minutes", "Every 10 minutes" }, Math.Max(0, Array.IndexOf(autosaveValues, s.AutosaveMinutes)), i =>
@@ -50,6 +52,8 @@ public sealed class SettingsWindow : FluentWindow
             }, "Recovery copy interval")));
         stack.Children.Add(Row("Icon.Ruler", "Smart guides", "Snap to edges, centres and equal spacing while moving things. Hold Alt to skip them once.",
             Switch(s.SnapToGuides, on => AppSettings.Update(x => x.SnapToGuides = on), "Smart guides")));
+        stack.Children.Add(Row("Icon.TextProofingTools", "Check spelling as I type", "Underlines misspelt words in red while you edit slide text and notes. Right-click a word for suggestions.",
+            Switch(s.SpellCheck, on => AppSettings.Update(x => x.SpellCheck = on), "Check spelling as I type")));
 
         Header(stack, "Slide show");
         stack.Children.Add(Row("Icon.Presenter", "Presenter view", "With two displays, show your notes, the next slide and a timer on yours while the audience sees the slides.",

@@ -87,6 +87,14 @@ public sealed class UndoStack
     /// <summary>Ends merging, so the next change starts a new step.</summary>
     public void Seal() => _lastMergeKey = null;
 
+    /// <summary>Records that the state after <paramref name="top"/> was saved (an automatic save of an earlier snapshot).</summary>
+    public void MarkSavedAt(IUndoAction? top)
+    {
+        _saved = top;
+        _savedAtStart = top == null;
+        Changed?.Invoke();
+    }
+
     public void MarkSaved()
     {
         _saved = Top;

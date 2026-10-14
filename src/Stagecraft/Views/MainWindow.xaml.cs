@@ -109,8 +109,14 @@ public partial class MainWindow
             session.MarkDirty();
             var count = session.Deck.Slides.Count;
             var text = $"Imported {count} slide{(count == 1 ? "" : "s")} from PowerPoint.";
-            if (doc.Warnings.Count > 0) text += " " + string.Join(" ", doc.Warnings.Take(3));
-            ShowMessage(text, doc.Warnings.Count > 0 ? 9 : 5);
+            if (doc.Warnings.Count == 0) ShowMessage(text, 5);
+            else
+            {
+                // Say what didn't come over (SmartArt, effects changed to the closest one, media, …) where it can be read.
+                var list = string.Join(Environment.NewLine, doc.Warnings.Select(w => "•  " + w));
+                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                MessageDialog.Show(this, text.TrimEnd('.'), "Some things couldn't be brought over exactly:" + Environment.NewLine + Environment.NewLine + list, "OK", icon: DialogIcon.Info);
+            }
         }
         else
         {
@@ -277,23 +283,13 @@ public partial class MainWindow
     {
         var work = SystemParameters.WorkArea;
         if (work.Width <= 0 || work.Height <= 0) return;
-        const double margin = 24;
-        var width = Math.Min(Width, work.Width - 2 * margin);
-        var height = Math.Min(Height, work.Height - 2 * margin);
+        var (bounds, maximize) = Core.Editing.ScreenFit.FirstStart(new Size(Width, Height), new Size(MinWidth, MinHeight), work);
         WindowStartupLocation = WindowStartupLocation.Manual;
-        if (width < MinWidth || height < MinHeight)
-        {
-            Left = work.Left;
-            Top = work.Top;
-            Width = Math.Min(Width, work.Width);
-            Height = Math.Min(Height, work.Height);
-            WindowState = WindowState.Maximized;
-            return;
-        }
-        Width = width;
-        Height = height;
-        Left = work.Left + (work.Width - width) / 2;
-        Top = work.Top + (work.Height - height) / 2;
+        Left = bounds.Left;
+        Top = bounds.Top;
+        Width = bounds.Width;
+        Height = bounds.Height;
+        if (maximize) WindowState = WindowState.Maximized;
     }
 
     // ------------------------------------------------------------------ updates

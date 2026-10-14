@@ -11,6 +11,7 @@ using Stagecraft.Core.Themes;
 using Stagecraft.Interop;
 using Stagecraft.Themes;
 using Stagecraft.Views;
+using Stagecraft.Views.Editor;
 using Stagecraft.Views.Show;
 
 namespace Stagecraft.Services;
@@ -22,11 +23,15 @@ namespace Stagecraft.Services;
 /// </summary>
 internal static class CaptureRunner
 {
+    /// <summary>A capture run is going on (settings stay in memory, see <see cref="AppSettings.Update"/>).</summary>
+    public static bool Running { get; private set; }
+
     private static string s_folder = "";
     private static readonly List<string> s_written = new();
 
     public static async void Run(string folder)
     {
+        Running = true;
         s_folder = folder;
         var exitCode = 0;
         try
@@ -115,6 +120,7 @@ internal static class CaptureRunner
             }
 
             if (mode == AppTheme.Light && Wanted(only, "smoke")) await Smoke(window);
+            if (Wanted(only, "v11")) await V11(window, suffix);
 
             if (mode == AppTheme.Light && Wanted(only, "theme"))
             {
@@ -204,6 +210,142 @@ internal static class CaptureRunner
     }
 
     /// <summary>
+    /// 1.1's screens: the animation pane and gallery, motion path editing, links (dialog and the show's tip),
+    /// video in the editor with its bar and options, the trim dialog, header and footer, find and replace, crop,
+    /// rulers and guides. All in Stagecraft's own off-screen windows.
+    /// </summary>
+    private static async Task V11(MainWindow window, string suffix)
+    {
+        // Animation pane with its timeline, then the gallery over it (shown in the window, not as a popup).
+        var aurora = DemoDecks.AuroraKickoff();
+        window.ShowEditor(new DeckSession(aurora.Deck, aurora.Media));
+        await Settle(900);
+        var editor = window.Editor!;
+        var agenda = aurora.Deck.Slides[1];
+        editor.State.GoTo(agenda);
+        await Settle(300);
+        editor.ShowAnimations(true);
+        var first = agenda.Animations[0];
+        editor.State.Select(new[] { first.Target });
+        editor.State.SelectEffects(new[] { first.Id });
+        await Settle(700);
+        await Capture(window, $"animation-pane-{suffix}");
+
+        FrameworkElement? gallery = null;
+        AnimationGallery.Intercept = g => gallery = g;
+        editor.Panel.OpenAddAnimation();
+        AnimationGallery.Intercept = null;
+        if (gallery != null)
+        {
+            gallery.HorizontalAlignment = HorizontalAlignment.Right;
+            gallery.VerticalAlignment = VerticalAlignment.Top;
+            gallery.Margin = new Thickness(0, 200, 20, 0);
+            editor.OverlayLayer.Children.Add(gallery);
+            await Settle(500);
+            editor.PreviewEffect(Core.Model.EffectClass.Entrance, Core.Model.EffectKind.Fly);
+            await Task.Delay(260);
+            await Capture(window, $"animation-gallery-{suffix}");
+            editor.StopEffectPreview();
+            editor.OverlayLayer.Children.Remove(gallery);
+            await Settle(200);
+        }
+
+        // Header and footer, then the dialog.
+        window.Session!.EditStructure("Header and footer", d => d.Footer = new Core.Model.HeaderFooter { SlideNumber = true, Date = true, Text = "Aurora Project kickoff" });
+        editor.State.GoTo(aurora.Deck.Slides[4]);
+        await Settle(500);
+        await CaptureDialog<HeaderFooterDialog>($"header-footer-{suffix}", () => editor.EditHeaderFooter());
+
+        // Link dialog (the agenda's first item links to a slide).
+        editor.ShowAnimations(false);
+        editor.State.GoTo(agenda);
+        await Settle(300);
+        var item1 = agenda.Elements.First(e => e.Placeholder == "item1");
+        editor.State.Select(new[] { item1.Id });
+        await Settle(400);
+        await CaptureDialog<LinkDialog>($"link-dialog-{suffix}", () => editor.InsertLink());
+        await Capture(window, $"link-panel-{suffix}");
+
+        // A video on a slide, its playback bar and options; then the trim dialog.
+        var look = aurora.Deck.Slides.First(s => s.Elements.OfType<Core.Model.VideoElement>().Any());
+        var video = look.Elements.OfType<Core.Model.VideoElement>().First();
+        editor.State.GoTo(look);
+        await Settle(400);
+        editor.State.Select(new[] { video.Id });
+        await Settle(500);
+        editor.SlideCanvas.HoverForCapture(video);
+        await Settle(900);
+        await Capture(window, $"video-editor-{suffix}");
+        editor.SlideCanvas.StopMediaPreview();
+        await CaptureDialog<TrimDialog>($"trim-dialog-{suffix}", () => editor.TrimMedia(video));
+
+        // Find and replace.
+        editor.State.GoTo(aurora.Deck.Slides[4]);
+        await Settle(400);
+        editor.OpenFind(replace: true);
+        editor.FindPanel.SetForCapture("customer", "client");
+        await Settle(700);
+        await Capture(window, $"find-replace-{suffix}");
+        editor.FindPanel.Close();
+        editor.SlideCanvas.SetFindHighlights(Array.Empty<Core.Editing.FindMatch>(), null);
+
+        // Rulers, gridlines and a guide (settings changed in memory only, never saved).
+        var settings = AppSettings.Current;
+        var (rulers, grid) = (settings.ShowRulers, settings.ShowGrid);
+        settings.ShowRulers = true;
+        settings.ShowGrid = true;
+        window.Session.EditStructure("Add guide", d => d.Guides.Add(new Core.Model.GuideLine { Vertical = true, Position = 960 }), redrawSlides: false);
+        editor.SlideCanvas.ApplyViewAids();
+        editor.State.ClearSelection();
+        await Settle(600);
+        await Capture(window, $"view-aids-{suffix}");
+        settings.ShowRulers = rulers;
+        settings.ShowGrid = grid;
+        editor.SlideCanvas.ApplyViewAids();
+
+        // A link's tip in the slide show (windowed test mode).
+        var thanks = aurora.Deck.Slides[aurora.Deck.Slides.Count - 1];
+        editor.State.GoTo(thanks);
+        await Settle(300);
+        editor.Present(fromCurrent: true, windowed: true);
+        await Settle(1400);
+        var link = LinkRegions.For(thanks, new RenderContext(aurora.Deck, aurora.Media)).FirstOrDefault();
+        foreach (var w in SlideShow.Windows().ToList())
+        {
+            if (w is not AudienceWindow audience) continue;
+            var surface = FindChild<ShowSurface>(audience, _ => true);
+            if (surface != null && link != null) surface.HoverForCapture(new Point(link.Bounds.X + link.Bounds.Width / 2, link.Bounds.Y + link.Bounds.Height / 2));
+            await Settle(500);
+            await Capture(audience, $"show-link-tip-{suffix}");
+        }
+        SlideShow.Current?.End();
+        await Settle(500);
+
+        // Motion path editing and crop (the coffee deck: the sun's path over the morning picture).
+        var coffee = DemoDecks.CoffeePitch();
+        window.ShowEditor(new DeckSession(coffee.Deck, coffee.Media));
+        await Settle(900);
+        editor = window.Editor!;
+        var morning = coffee.Deck.Slides.First(s => s.Animations.Any(a => a.Class == Core.Model.EffectClass.Motion));
+        var motion = morning.Animations.First(a => a.Class == Core.Model.EffectClass.Motion);
+        editor.State.GoTo(morning);
+        await Settle(300);
+        editor.ShowAnimations(true);
+        editor.State.Select(new[] { motion.Target });
+        editor.State.SelectEffects(new[] { motion.Id });
+        await Settle(800);
+        await Capture(window, $"motion-path-{suffix}");
+        editor.ShowAnimations(false);
+        var picture = morning.Elements.OfType<Core.Model.ImageElement>().First();
+        editor.StartCrop(picture);
+        await Settle(700);
+        await Capture(window, $"crop-{suffix}");
+        editor.SlideCanvas.EndCrop(commit: false);
+        await Settle(300);
+        window.Session!.History.Clear();
+    }
+
+    /// <summary>
     /// Runs (almost) every editor command on a new deck, then undoes and redoes them all, and writes smoke.txt with
     /// anything that threw. Dialogs that commands open (chart, table, section name) are accepted through UI
     /// Automation on our own window; nothing touches the clipboard, files or the screen.
@@ -219,13 +361,19 @@ internal static class CaptureRunner
         var accept = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         accept.Tick += (_, _) =>
         {
-            foreach (var w in Application.Current.Windows.OfType<Window>().Where(w => w is ChartEditorDialog or TableEditorDialog or InputDialog).ToList())
+            foreach (var w in Application.Current.Windows.OfType<Window>().Where(w => w is ChartEditorDialog or TableEditorDialog or InputDialog or HeaderFooterDialog).ToList())
             {
                 MoveOffscreen(w);
                 var button = FindChild<System.Windows.Controls.Button>(w, b => b.IsDefault || b.Content as string == "Done");
                 if (button != null && new System.Windows.Automation.Peers.ButtonAutomationPeer(button).GetPattern(System.Windows.Automation.Peers.PatternInterface.Invoke)
                         is System.Windows.Automation.Provider.IInvokeProvider invoke)
                     invoke.Invoke();
+            }
+            // Dialogs that need input of their own (links, online videos, trimming, messages): cancelled.
+            foreach (var w in Application.Current.Windows.OfType<Window>().Where(w => w is LinkDialog or OnlineVideoDialog or TrimDialog or MessageDialog).ToList())
+            {
+                MoveOffscreen(w);
+                w.Close();
             }
         };
         accept.Start();
@@ -235,10 +383,12 @@ internal static class CaptureRunner
         {
             "Cut", "Copy", "Paste", "Picture…", "Icon…", "Background picture…", "Command palette", "Slide size: custom…",
             "Present from the beginning", "Present from this slide", "Presenter view on this screen", "Rehearse timings",
-            // These two are saved in the settings.
-            "Show or hide speaker notes", "Turn smart guides on or off",
+            // These are saved in the settings.
+            "Show or hide speaker notes", "Turn smart guides on or off", "Show or hide rulers", "Show or hide gridlines", "Snap to grid on or off",
+            // File pickers (Windows' own dialogs).
+            "Video…", "Sound…", "Replace picture…",
         };
-        var order = new[] { "Insert", "Arrange", "Text", "Edit", "Slide", "Layout", "Transition", "Design", "Theme", "View", "Present" };
+        var order = new[] { "Insert", "Arrange", "Text", "Edit", "Slide", "Layout", "Transition", "Design", "Theme", "View", "Animation", "Picture", "Media", "Present" };
         var commands = editor.Commands.Where(c => order.Contains(c.Category) && !skip.Contains(c.Title)).OrderBy(c => Array.IndexOf(order, c.Category)).ToList();
         var themes = 0;
         var ran = 0;

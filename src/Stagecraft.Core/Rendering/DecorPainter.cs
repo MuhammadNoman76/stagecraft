@@ -23,18 +23,71 @@ public static class DecorPainter
             dc.DrawRectangle(new SolidColorBrush(Color.FromArgb((byte)(MathEx.Clamp(fill.Dim, 0, 1) * 255), 0, 0, 0)), null, rect);
     }
 
-    public static void Paint(DrawingContext dc, Slide slide, SlideStyle style, RenderContext ctx, double width, double height)
+    public static void Paint(DrawingContext dc, Slide slide, SlideStyle style, RenderContext ctx, double width, double height, bool footer = true)
     {
         PaintBackground(dc, slide, style, ctx, width, height);
         // Pictures as backgrounds, image-led layouts and custom backgrounds get no decorations.
-        if (!slide.ShowDecorations || slide.Background != null) return;
-        if (slide.Layout is "image-full" or "blank") return;
+        var decorate = slide.ShowDecorations && slide.Background == null && slide.Layout is not ("image-full" or "blank");
+        if (decorate) PaintDecorations(dc, slide, style, ctx, width, height);
+        if (footer) PaintFooter(dc, slide, style, ctx, width, height);
+    }
 
+    /// <summary>
+    /// The header and footer: date on the left, footer text in the middle, slide number on the right, in the theme's
+    /// text font and muted colour, inside the bottom margin.
+    /// </summary>
+    public static void PaintFooter(DrawingContext dc, Slide slide, SlideStyle style, RenderContext ctx, double width, double height)
+    {
+        var footer = ctx.Deck.Footer;
+        if (footer == null || !footer.ShowsOn(slide)) return;
+        var m = style.Margin;
+        var size = 22 * style.Scale;
+        var color = style.Resolve("text2");
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        var face = FontCatalog.Typeface(style.Theme.Fonts.Body, 500, false);
+        var middle = height - m * 0.42;
+        FormattedText Make(string s, double maxWidth) => new(s, Culture, FlowDirection.LeftToRight, face, size, brush, 1.0)
+        {
+            MaxTextWidth = Math.Max(1, maxWidth),
+            MaxLineCount = 1,
+            Trimming = TextTrimming.CharacterEllipsis,
+        };
+        var third = (width - 2 * m) / 3;
+        if (footer.Date)
+        {
+            var date = footer.DateFor(ctx.Now);
+            if (date.Length > 0)
+            {
+                var ft = Make(date, third);
+                dc.DrawText(ft, new Point(m, middle - ft.Height / 2));
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(footer.Text))
+        {
+            var ft = Make(footer.Text!.Trim(), third * 1.4);
+            ft.TextAlignment = TextAlignment.Center;
+            dc.DrawText(ft, new Point(width / 2 - ft.MaxTextWidth / 2, middle - ft.Height / 2));
+        }
+        if (footer.SlideNumber)
+        {
+            var number = ctx.NumberOf(slide);
+            if (number > 0)
+            {
+                var ft = Make(number.ToString(Culture), third);
+                dc.DrawText(ft, new Point(width - m - ft.Width, middle - ft.Height / 2));
+            }
+        }
+    }
+
+    private static void PaintDecorations(DrawingContext dc, Slide slide, SlideStyle style, RenderContext ctx, double width, double height)
+    {
         var w = width;
         var h = height;
         var m = style.Margin;
         var emphasis = style.IsEmphasis;
-        var number = ctx.NumberOf(slide);
+        // With the footer's slide numbers on, the theme doesn't draw its own.
+        var number = ctx.Deck.Footer is { SlideNumber: true } ? 0 : ctx.NumberOf(slide);
         var a1 = style.Accent(0);
         var a2 = style.Accent(1);
         var a3 = style.Accent(2);

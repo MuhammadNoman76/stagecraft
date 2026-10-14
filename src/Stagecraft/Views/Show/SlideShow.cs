@@ -32,11 +32,11 @@ public static class SlideShow
         if (options.Windowed)
         {
             if (!options.PresenterOnly) audience = new AudienceWindow(controller, null, windowed: true);
-            presenter = new PresenterWindow(controller, null, windowed: true);
+            presenter = new PresenterWindow(controller, null, windowed: true, sound: options.PresenterOnly);
         }
         else if (options.PresenterOnly)
         {
-            presenter = new PresenterWindow(controller, monitors.FirstOrDefault(), windowed: false);
+            presenter = new PresenterWindow(controller, monitors.FirstOrDefault(), windowed: false, sound: true);
         }
         else
         {
@@ -56,6 +56,7 @@ public static class SlideShow
             }
         }
 
+        controller.LinkRequested += link => LinkLauncher.Open(link, (Window?)audience ?? presenter, session.FilePath != null ? System.IO.Path.GetDirectoryName(session.FilePath) : null);
         Native.KeepDisplayOn(true);
         controller.ShowEnded += () =>
         {

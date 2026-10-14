@@ -13,7 +13,7 @@ namespace Stagecraft.Views.Editor;
 
 public sealed partial class SlideCanvas
 {
-    private enum DragMode { None, Pending, Move, Resize, Rotate, Marquee, Pan, LineEnd }
+    private enum DragMode { None, Pending, Move, Resize, Rotate, Marquee, Pan, LineEnd, PathNode, DrawPath, Guide }
 
     private DragMode _mode;
     private Point _downView;
@@ -63,7 +63,8 @@ public sealed partial class SlideCanvas
         Drop += OnDrop;
     }
 
-    private bool SnappingOn => AppSettings.Current.SnapToGuides && (Keyboard.Modifiers & ModifierKeys.Alt) == 0;
+    private bool SnappingOn =>
+        (AppSettings.Current.SnapToGuides || AppSettings.Current.SnapToGrid || _state?.Deck.Guides.Count > 0) && (Keyboard.Modifiers & ModifierKeys.Alt) == 0;
 
     private bool FromTextEditor(object source) =>
         _textBox != null && source is DependencyObject d && (d == _textBox || IsDescendant(_textBox, d));
@@ -120,6 +121,24 @@ public sealed partial class SlideCanvas
         _changed = false;
         _duplicated = false;
 
+        if (IsCropping && CropMouseDown(view, p))
+        {
+            e.Handled = true;
+            return;
+        }
+        if (AnimationMouseDown(view, p))
+        {
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && !shift && e.ClickCount == 1 && LinkAt(p) is { } link)
+        {
+            // Ctrl+click follows a link, as in the slide show.
+            LinkFollowed?.Invoke(link);
+            e.Handled = true;
+            return;
+        }
+
         if (e.ClickCount == 2)
         {
             var hit = HitTest(p);
@@ -139,6 +158,12 @@ public sealed partial class SlideCanvas
                 var c = RotationCenter();
                 _startAngle = Math.Atan2(p.Y - c.Y, p.X - c.X) * 180 / Math.PI;
             }
+            e.Handled = true;
+            return;
+        }
+
+        if (GuideMouseDown(view))
+        {
             e.Handled = true;
             return;
         }
@@ -230,11 +255,20 @@ public sealed partial class SlideCanvas
         if (_state?.CurrentSlide is not { } slide) return;
         var view = e.GetPosition(_viewport);
         var p = ToSlide(view);
+        if (CropMouseMove(p)) return;
 
         switch (_mode)
         {
             case DragMode.None:
+                if (IsCropping)
+                {
+                    Cursor = CropCursor(view, p);
+                    return;
+                }
                 UpdateHover(view, p, e);
+                return;
+            case DragMode.Guide:
+                DoGuideDrag(p);
                 return;
             case DragMode.Pan:
                 Pan((Vector)view - _lastPanPoint);
@@ -265,6 +299,12 @@ public sealed partial class SlideCanvas
             case DragMode.Marquee:
                 DoMarquee(slide, p);
                 return;
+            case DragMode.PathNode:
+                DoPathNode(p);
+                return;
+            case DragMode.DrawPath:
+                DoDrawPath(p);
+                return;
         }
     }
 
@@ -273,6 +313,16 @@ public sealed partial class SlideCanvas
         if (_spaceDown)
         {
             Cursor = Cursors.Hand;
+            return;
+        }
+        if (IsDrawingPath)
+        {
+            Cursor = Cursors.Pen;
+            return;
+        }
+        if (PathNodeAt(view) != null)
+        {
+            Cursor = Cursors.SizeAll;
             return;
         }
         var handle = HandleAt(view);
@@ -286,9 +336,16 @@ public sealed partial class SlideCanvas
             }
             return;
         }
+        if (GuideAt(view) is var gi && gi >= 0 && _state?.Deck.Guides[gi] is { } guide)
+        {
+            Cursor = guide.Vertical ? Cursors.SizeWE : Cursors.SizeNS;
+            return;
+        }
         var hit = HitTest(p);
         Cursor = hit != null && !hit.Locked ? Cursors.SizeAll : null;
         if (hit is TextElement && _state!.IsSelected(hit.Id) && _state.Selection.Count == 1) Cursor = Cursors.IBeam;
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && LinkAt(p) != null) Cursor = Cursors.Hand;
+        UpdateMediaHover(hit, view);
         if (_overlay.Hover != hit)
         {
             _overlay.Hover = hit;
@@ -325,7 +382,13 @@ public sealed partial class SlideCanvas
     {
         var others = slide.Elements.Where(x => !_state!.IsSelected(x.Id) && x.Placeholder != "decor").Select(x => x.RotatedBounds);
         var style = SlideStyle.For(_state!.Deck, slide);
-        return new SnapTargets(others, new Size(_state.Deck.Width, _state.Deck.Height), style.Margin);
+        var settings = AppSettings.Current;
+        return new SnapTargets(others, new Size(_state.Deck.Width, _state.Deck.Height), style.Margin)
+        {
+            Smart = settings.SnapToGuides,
+            UserGuides = _state.Deck.Guides.ToList(),
+            Grid = settings.SnapToGrid ? settings.GridSize : 0,
+        };
     }
 
     private void DoMove(Slide slide, Point p)
@@ -580,6 +643,11 @@ public sealed partial class SlideCanvas
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (CropMouseUp())
+        {
+            e.Handled = true;
+            return;
+        }
         if (_mode == DragMode.None) return;
         if (_mode == DragMode.Pending && _state?.SingleSelection is TextElement t && (e.GetPosition(_viewport) - _downView).Length < 3
             && e.ChangedButton == MouseButton.Left && (Keyboard.Modifiers & (ModifierKeys.Shift | ModifierKeys.Control)) == 0 && _textClickCandidate == t.Id)
@@ -600,6 +668,20 @@ public sealed partial class SlideCanvas
         var mode = _mode;
         _mode = DragMode.None;
         if (_viewport.IsMouseCaptured) _viewport.ReleaseMouseCapture();
+        if (mode == DragMode.Guide)
+        {
+            EndGuideDrag(cancel);
+            return;
+        }
+        if (mode is DragMode.PathNode or DragMode.DrawPath)
+        {
+            if (cancel && mode == DragMode.PathNode && _before != null && _state?.CurrentSlide is { } s0) _state.Session.Revert(s0, _before);
+            else EndAnimationDrag(mode);
+            _before = null;
+            _changed = false;
+            _overlay.InvalidateVisual();
+            return;
+        }
         Cursor = _spaceDown ? Cursors.Hand : null;
         _overlay.Guides = Array.Empty<Guide>();
         _overlay.Marquee = null;
@@ -705,6 +787,22 @@ public sealed partial class SlideCanvas
                 CycleSelection(shift ? -1 : 1);
                 e.Handled = true;
                 break;
+            case Key.Escape when _mode == DragMode.Guide:
+                EndDrag(cancel: true);
+                e.Handled = true;
+                break;
+            case Key.Escape when IsDrawingPath:
+                CancelDrawPath();
+                e.Handled = true;
+                break;
+            case Key.Escape when IsCropping:
+                EndCrop(commit: false);
+                e.Handled = true;
+                break;
+            case Key.Enter when IsCropping:
+                EndCrop(commit: true);
+                e.Handled = true;
+                break;
             case Key.Escape:
                 if (_state.EnteredGroup != null)
                 {
@@ -758,19 +856,43 @@ public sealed partial class SlideCanvas
 
     private void OnDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = ClipboardImages.HasImages(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Effects = ClipboardImages.HasImages(e.Data) || DroppedMedia(e.Data).Count > 0 ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void OnDrop(object sender, DragEventArgs e)
     {
+        var p = ToSlide(e.GetPosition(_viewport));
+        var media = DroppedMedia(e.Data);
+        if (media.Count > 0)
+        {
+            MediaDropped?.Invoke(media, p);
+            e.Handled = true;
+            return;
+        }
         var images = ClipboardImages.Read(e.Data);
         if (images.Count == 0) return;
-        var p = ToSlide(e.GetPosition(_viewport));
         var target = HitTest(p) as ImageElement;
         ImagesDropped?.Invoke(images, p, target);
         e.Handled = true;
     }
+
+    /// <summary>Video and sound files being dragged in from Explorer.</summary>
+    private static List<string> DroppedMedia(IDataObject data)
+    {
+        try
+        {
+            if (!data.GetDataPresent(DataFormats.FileDrop) || data.GetData(DataFormats.FileDrop) is not string[] files) return new List<string>();
+            return files.Where(MediaTypes.IsMedia).ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    /// <summary>Video or sound files were dropped at a slide point.</summary>
+    public event Action<List<string>, Point>? MediaDropped;
 
     public string ZoomText => Math.Round(Zoom * 100).ToString(CultureInfo.CurrentCulture) + "%";
 }

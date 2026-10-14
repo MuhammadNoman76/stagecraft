@@ -3,6 +3,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Stagecraft.Controls;
 using Stagecraft.Core.Animation;
+using Stagecraft.Core.Editing;
+using Stagecraft.Core.IO;
 using Stagecraft.Core.Model;
 using Stagecraft.Interop;
 using Stagecraft.Views.Show;
@@ -70,13 +72,14 @@ public partial class EditorView
 
     // ------------------------------------------------------------------ previews on the canvas
 
-    public void PreviewTransition() => StartPreview(transition: true, builds: false);
+    public void PreviewTransition() => StartPreview(transition: true, animations: false);
 
-    public void PreviewBuilds() => StartPreview(transition: false, builds: true);
+    /// <summary>Plays the slide's animations on the canvas, from the beginning or from a click.</summary>
+    public void PreviewAnimations(int fromClick = 0) => StartPreview(transition: false, animations: true, fromClick: fromClick);
 
-    private void StartPreview(bool transition, bool builds)
+    private void StartPreview(bool transition, bool animations, int fromClick = 0, Slide? only = null, bool quiet = false)
     {
-        var slide = _state.CurrentSlide;
+        var slide = only ?? _state.CurrentSlide;
         if (slide == null || _altViewIndex != 0) return;
         if (Canvas.IsEditingText) Canvas.CommitTextEdit();
         StopPreview();
@@ -87,9 +90,9 @@ public partial class EditorView
             _window.ShowMessage("This is the first slide, so there's no transition into it to preview.", 4);
             return;
         }
-        if (builds && Builds.StepCount(slide) == 0)
+        if (animations && only == null && SlideTimeline.Build(slide).Groups.Count == 0)
         {
-            _window.ShowMessage("Nothing on this slide is animated yet. Select something and pick an effect under Animation.", 5);
+            _window.ShowMessage("Nothing on this slide is animated yet. Select something and choose Add animation.", 5);
             return;
         }
         var rect = Canvas.ToView(new Rect(0, 0, Session.Deck.Width, Session.Deck.Height));
@@ -100,13 +103,37 @@ public partial class EditorView
             Margin = new Thickness(rect.X, rect.Y, 0, 0),
             Width = Math.Max(1, rect.Width),
             Height = Math.Max(1, rect.Height),
-            Cursor = System.Windows.Input.Cursors.Hand,
-            ToolTip = "Click to stop the preview",
+            Cursor = quiet ? null : System.Windows.Input.Cursors.Hand,
+            ToolTip = quiet ? null : "Click to stop the preview",
+            IsHitTestVisible = !quiet,
         };
         surface.MouseLeftButtonDown += (_, _) => StopPreview();
         Canvas.Children.Add(surface);
         _preview = surface;
-        surface.Preview(previous, slide, Session.CreateRenderContext(), transition, builds, StopPreview);
+        _previewQuiet = quiet;
+        surface.Preview(previous, slide, Session.CreateRenderContext(), transition, animations, StopPreview, fromClick);
+    }
+
+    private bool _previewQuiet;
+
+    /// <summary>The gallery's live preview: plays one effect on the selection (nothing is changed).</summary>
+    public void PreviewEffect(EffectClass cls, EffectKind kind)
+    {
+        var slide = _state.CurrentSlide;
+        if (slide == null || _state.Selection.Count == 0) return;
+        var probe = DeckJson.Clone(slide);
+        probe.Animations.Clear();
+        var targets = AnimationOps.TargetsFor(_state.SelectedElements, _state.EnteredGroup);
+        var added = AnimationOps.Add(probe, cls, kind, targets);
+        foreach (var a in added) a.Start = EffectStart.WithPrevious;
+        // Keep the other elements' own entrances out of it: they're just shown.
+        StartPreview(transition: false, animations: true, only: probe, quiet: true);
+    }
+
+    /// <summary>Stops a quiet (gallery) preview.</summary>
+    public void StopEffectPreview()
+    {
+        if (_previewQuiet) StopPreview();
     }
 
     private void StopPreview()
@@ -115,6 +142,7 @@ public partial class EditorView
         var p = _preview;
         _preview = null;
         p.FinishAll();
+        p.Shutdown();
         Canvas.Children.Remove(p);
     }
 }

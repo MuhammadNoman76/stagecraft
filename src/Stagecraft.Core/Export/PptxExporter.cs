@@ -18,8 +18,10 @@ public sealed class PptxExportOptions
 
 /// <summary>
 /// PowerPoint (.pptx) export. Text boxes, shapes, lines, pictures and tables become native, editable PowerPoint
-/// objects with the deck's slide size, transitions (Morph becomes a fade) and speaker notes. Charts, icons and the
-/// theme's background artwork are embedded as high-resolution pictures; build animations are not exported.
+/// objects with the deck's slide size, transitions (Morph becomes a fade) and speaker notes. Animations become
+/// PowerPoint animations (<see cref="PptxTimingWriter"/>), links become hyperlinks and actions, and videos and
+/// sounds become PowerPoint media. Charts, icons, action buttons, online video cards and the theme's background
+/// artwork are embedded as high-resolution pictures (keeping their links).
 /// </summary>
 public static class PptxExporter
 {
@@ -66,13 +68,20 @@ public static class PptxExporter
         Write(notesMaster, NotesMasterXml());
 
         var slideIds = new List<string>();
-        var images = new Dictionary<string, ImagePart>();
+        // Every slide part first: links can jump to slides further on.
+        var parts = new Dictionary<string, SlidePart>();
+        foreach (var slide in slides)
+        {
+            var part = presentation.AddNewPart<SlidePart>();
+            part.AddPart(layout);
+            parts[slide.Id] = part;
+        }
+        var shared = new SharedState(doc, parts, slides);
         for (var i = 0; i < slides.Count; i++)
         {
             var slide = slides[i];
-            var part = presentation.AddNewPart<SlidePart>();
-            part.AddPart(layout);
-            var writer = new SlideWriter(deck, media, ctx, slide, part, images);
+            var part = parts[slide.Id];
+            var writer = new SlideWriter(deck, media, ctx, slide, part, shared);
             Write(part, writer.Build());
             if (!string.IsNullOrWhiteSpace(slide.Notes))
             {
@@ -231,6 +240,23 @@ public static class PptxExporter
 
     // ------------------------------------------------------------------ slides
 
+    /// <summary>What every slide writer shares: the package, the slide parts (for slide links), pictures and media written once.</summary>
+    private sealed class SharedState
+    {
+        public SharedState(PresentationDocument doc, Dictionary<string, SlidePart> parts, List<Slide> slides)
+        {
+            Doc = doc;
+            Parts = parts;
+            Slides = slides;
+        }
+
+        public PresentationDocument Doc { get; }
+        public Dictionary<string, SlidePart> Parts { get; }
+        public List<Slide> Slides { get; }
+        public Dictionary<string, ImagePart> Images { get; } = new();
+        public Dictionary<string, MediaDataPart> MediaParts { get; } = new();
+    }
+
     private sealed class SlideWriter
     {
         private readonly Deck _deck;
@@ -239,18 +265,25 @@ public static class PptxExporter
         private readonly Slide _slide;
         private readonly SlidePart _part;
         private readonly SlideStyle _style;
+        private readonly SharedState _shared;
         private readonly Dictionary<string, ImagePart> _images;
         private readonly StringBuilder _sb = new();
         private int _nextId = 2;
 
-        public SlideWriter(Deck deck, MediaStore media, RenderContext ctx, Slide slide, SlidePart part, Dictionary<string, ImagePart> images)
+        // Shape ids of the elements written (animations refer to them), the ones with text, and the media.
+        private readonly Dictionary<string, int> _spids = new();
+        private readonly HashSet<int> _textShapes = new();
+        private readonly List<PptxMediaInfo> _mediaShapes = new();
+
+        public SlideWriter(Deck deck, MediaStore media, RenderContext ctx, Slide slide, SlidePart part, SharedState shared)
         {
             _deck = deck;
             _media = media;
             _ctx = ctx;
             _slide = slide;
             _part = part;
-            _images = images;
+            _shared = shared;
+            _images = shared.Images;
             _style = ctx.StyleFor(slide);
         }
 
@@ -272,10 +305,239 @@ public static class PptxExporter
                     PictureOf(e);
                 }
             }
+            Footer();
             _sb.Append("</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>");
             Transition();
+            string? timing = null;
+            try
+            {
+                timing = new PptxTimingWriter(_slide, _deck, _spids, _textShapes, _mediaShapes).Build();
+            }
+            catch (Exception)
+            {
+                // A slide whose animations can't be written keeps everything else.
+            }
+            if (timing != null) _sb.Append(timing);
             _sb.Append("</p:sld>");
             return _sb.ToString();
+        }
+
+
+        /// <summary>The header and footer as PowerPoint text boxes: the slide number and an automatic date as fields.</summary>
+        private void Footer()
+        {
+            var footer = _deck.Footer;
+            if (footer == null || !footer.ShowsOn(_slide)) return;
+            var m = _style.Margin;
+            var size = 22 * _style.Scale;
+            var third = (_deck.Width - 2 * m) / 3;
+            var height = size * 1.7;
+            var top = _deck.Height - m * 0.42 - height / 2;
+            var color = Hex(_style.Resolve("text2"));
+            var font = Esc(_style.Theme.Fonts.Body);
+            string Props() => $"<a:rPr lang=\"en-US\" sz=\"{FontSize(size)}\" dirty=\"0\"><a:solidFill><a:srgbClr val=\"{color}\"/></a:solidFill><a:latin typeface=\"{font}\"/><a:cs typeface=\"{font}\"/></a:rPr>";
+            void Box(string name, double x, double width, string align, string content)
+            {
+                var id = _nextId++;
+                _sb.Append($"<p:sp><p:nvSpPr><p:cNvPr id=\"{id}\" name=\"{name}\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr>");
+                _sb.Append($"<p:spPr><a:xfrm><a:off x=\"{Emu(x)}\" y=\"{Emu(top)}\"/><a:ext cx=\"{Emu(width)}\" cy=\"{Emu(height)}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>");
+                _sb.Append($"<p:txBody><a:bodyPr wrap=\"none\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\" anchor=\"ctr\"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn=\"{align}\"/>{content}");
+                _sb.Append($"<a:endParaRPr lang=\"en-US\" sz=\"{FontSize(size)}\" dirty=\"0\"/></a:p></p:txBody></p:sp>");
+            }
+            if (footer.Date)
+            {
+                var text = Esc(footer.DateFor(_ctx.Now));
+                var content = footer.FixedDate
+                    ? $"<a:r>{Props()}<a:t>{text}</a:t></a:r>"
+                    : $"<a:fld id=\"{Guid.NewGuid().ToString("B").ToUpperInvariant()}\" type=\"{(footer.DateFormat == "long" ? "datetime4" : "datetime1")}\">{Props()}<a:t>{text}</a:t></a:fld>";
+                if (text.Length > 0) Box("Date", m, third, "l", content);
+            }
+            if (!string.IsNullOrWhiteSpace(footer.Text))
+                Box("Footer", _deck.Width / 2 - third * 0.7, third * 1.4, "ctr", $"<a:r>{Props()}<a:t>{Esc(footer.Text!.Trim())}</a:t></a:r>");
+            if (footer.SlideNumber)
+            {
+                var number = _ctx.NumberOf(_slide);
+                if (number > 0)
+                    Box("Slide number", _deck.Width - m - third, third, "r",
+                        $"<a:fld id=\"{Guid.NewGuid().ToString("B").ToUpperInvariant()}\" type=\"slidenum\">{Props()}<a:t>{number.ToString(Inv)}</a:t></a:fld>");
+            }
+        }
+        // ------------------------------------------------------------------ links
+
+        /// <summary>
+        /// The a:hlinkClick for a link (null when there's none or it can't be written): web pages and e-mail as
+        /// hyperlinks, slide jumps as PowerPoint show actions, files as links to the file.
+        /// </summary>
+        private string? HlinkClick(Hyperlink? link)
+        {
+            if (link == null) return null;
+            string? rid = null;
+            string? action = null;
+            switch (link.Kind)
+            {
+                case LinkKind.Web:
+                case LinkKind.Email:
+                {
+                    var uri = LinkSafety.SafeUri(link);
+                    if (uri == null) return null;
+                    rid = _part.AddHyperlinkRelationship(new Uri(uri, UriKind.Absolute), true).Id;
+                    break;
+                }
+                case LinkKind.File:
+                {
+                    var path = LinkSafety.ResolveFile(link.Address, _media.BaseFolder) ?? link.Address;
+                    if (string.IsNullOrWhiteSpace(path)) return null;
+                    try
+                    {
+                        var uri = Path.IsPathRooted(path) ? new Uri(path, UriKind.Absolute) : new Uri(path.Replace('\\', '/'), UriKind.Relative);
+                        rid = _part.AddHyperlinkRelationship(uri, true).Id;
+                    }
+                    catch (UriFormatException)
+                    {
+                        return null;
+                    }
+                    break;
+                }
+                case LinkKind.Slide:
+                {
+                    var jump = link.Jump switch
+                    {
+                        SlideJump.Next => "nextslide",
+                        SlideJump.Previous => "previousslide",
+                        SlideJump.First => "firstslide",
+                        SlideJump.Last => "lastslide",
+                        SlideJump.LastViewed => "lastslideviewed",
+                        _ => null,
+                    };
+                    if (jump != null)
+                    {
+                        rid = "";
+                        action = "ppaction://hlinkshowjump?jump=" + jump;
+                        break;
+                    }
+                    if (link.SlideId == null || !_shared.Parts.TryGetValue(link.SlideId, out var target) || target == _part) return null;
+                    rid = _part.CreateRelationshipToPart(target);
+                    action = "ppaction://hlinksldjump";
+                    break;
+                }
+            }
+            if (rid == null) return null;
+            var tip = string.IsNullOrWhiteSpace(link.ScreenTip) ? "" : $" tooltip=\"{Esc(link.ScreenTip!)}\"";
+            return $"<a:hlinkClick r:id=\"{rid}\"{(action != null ? $" action=\"{action}\"" : "")}{tip}/>";
+        }
+
+        /// <summary>p:cNvPr with the element's link (or <paramref name="extra"/>, e.g. the media action) inside.</summary>
+        private string CNvPr(int id, string name, string? descr, Hyperlink? link, string? extra = null)
+        {
+            var inner = extra ?? HlinkClick(link);
+            var d = descr != null ? $" descr=\"{Esc(descr)}\"" : "";
+            return inner == null ? $"<p:cNvPr id=\"{id}\" name=\"{name}\"{d}/>" : $"<p:cNvPr id=\"{id}\" name=\"{name}\"{d}>{inner}</p:cNvPr>";
+        }
+
+        // ------------------------------------------------------------------ video and sound
+
+        /// <summary>The package part holding a video or sound file (written once, shared by slides).</summary>
+        private MediaDataPart? MediaPart(MediaClipElement clip, out bool linked, out string? linkedPath)
+        {
+            linked = false;
+            linkedPath = null;
+            if (clip.Media != null)
+            {
+                if (_shared.MediaParts.TryGetValue(clip.Media, out var existing)) return existing;
+                var item = _media.Get(clip.Media);
+                if (item == null) return null;
+                var ext = Path.GetExtension(clip.Media).TrimStart('.').ToLowerInvariant();
+                var part = _shared.Doc.CreateMediaDataPart(MediaTypes.ContentType(clip.Media), "." + ext);
+                using (var s = item.OpenRead()) part.FeedData(s);
+                _shared.MediaParts[clip.Media] = part;
+                return part;
+            }
+            linkedPath = _media.ResolveLink(clip) ?? clip.LinkAbsolute ?? clip.LinkPath;
+            linked = linkedPath != null;
+            return null;
+        }
+
+        private const string MediaRelType = "http://schemas.microsoft.com/office/2007/relationships/media";
+        private const string VideoRelType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video";
+        private const string AudioRelType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio";
+
+        /// <summary>A video or sound as PowerPoint media: its poster (or icon) picture, the file, trim and fades.</summary>
+        private void Media(MediaClipElement clip)
+        {
+            var video = clip is VideoElement;
+            var part = MediaPart(clip, out var linked, out var linkedPath);
+            if (part == null && !linked)
+            {
+                PictureOf(clip); // the file is missing: keep the look
+                return;
+            }
+            string fileRel, mediaRel;
+            if (part != null)
+            {
+                fileRel = video ? _part.AddVideoReferenceRelationship(part).Id : _part.AddAudioReferenceRelationship(part).Id;
+                mediaRel = _part.AddMediaReferenceRelationship(part).Id;
+            }
+            else
+            {
+                var uri = new Uri(linkedPath!, Path.IsPathRooted(linkedPath!) ? UriKind.Absolute : UriKind.Relative);
+                fileRel = _part.AddExternalRelationship(video ? VideoRelType : AudioRelType, uri).Id;
+                mediaRel = _part.AddExternalRelationship(MediaRelType, uri).Id;
+            }
+
+            // The picture PowerPoint shows: the poster frame, else the look Stagecraft draws (the speaker icon for sounds).
+            var bounds = clip.Bounds;
+            string poster;
+            if (clip is VideoElement { Poster: { } p } && _media.GetImage(p) is { } posterImage)
+                poster = AddImage(MediaStore.EncodeJpeg(posterImage, 90), "jpg");
+            else
+                poster = AddImage(MediaStore.EncodePng(RenderElement(IconLook(clip), out bounds)), "png");
+
+            var id = _nextId++;
+            _spids[clip.Id] = id;
+            _mediaShapes.Add(new PptxMediaInfo(clip, id));
+            var trim = "";
+            if (clip.TrimStart > 0 || clip.TrimEnd != null)
+            {
+                var end = clip.TrimEnd is { } te && clip.Length is { } len && len > te ? $" end=\"{Ms(len - te)}\"" : "";
+                trim = $"<p14:trim st=\"{Ms(clip.TrimStart)}\"{end}/>";
+            }
+            var fade = clip.FadeIn > 0 || clip.FadeOut > 0 ? $"<p14:fade in=\"{Ms(clip.FadeIn)}\" out=\"{Ms(clip.FadeOut)}\"/>" : "";
+            var mediaAttr = part != null ? $"r:embed=\"{mediaRel}\"" : $"r:link=\"{mediaRel}\"";
+            _sb.Append("<p:pic><p:nvPicPr>").Append(CNvPr(id, Name(clip, video ? "Video" : "Sound"), clip.DisplayName, null, "<a:hlinkClick r:id=\"\" action=\"ppaction://media\"/>"));
+            _sb.Append("<p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr>");
+            _sb.Append(video ? $"<a:videoFile r:link=\"{fileRel}\"/>" : $"<a:audioFile r:link=\"{fileRel}\"/>");
+            _sb.Append("<p:extLst><p:ext uri=\"{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}\">");
+            _sb.Append($"<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {mediaAttr}>{trim}{fade}</p14:media>");
+            _sb.Append("</p:ext></p:extLst></p:nvPr></p:nvPicPr>");
+            _sb.Append($"<p:blipFill><a:blip r:embed=\"{poster}\"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>");
+            var geometry = clip is VideoElement v
+                ? v.Mask == ImageMask.Circle ? "<a:prstGeom prst=\"ellipse\"><a:avLst/></a:prstGeom>"
+                : v.CornerRadius > 0 ? $"<a:prstGeom prst=\"roundRect\"><a:avLst><a:gd name=\"adj\" fmla=\"val {(int)Math.Round(MathEx.Clamp(v.CornerRadius / Math.Max(1, Math.Min(v.Width, v.Height)), 0, 0.5) * 100000)}\"/></a:avLst></a:prstGeom>"
+                : "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>"
+                : "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>";
+            var xfrm = video ? Xfrm(clip) : $"<a:xfrm><a:off x=\"{Emu(bounds.X)}\" y=\"{Emu(bounds.Y)}\"/><a:ext cx=\"{Emu(bounds.Width)}\" cy=\"{Emu(bounds.Height)}\"/></a:xfrm>";
+            _sb.Append("<p:spPr>").Append(xfrm).Append(geometry);
+            if (clip is VideoElement { Stroke: { } stroke }) _sb.Append(LineXml(stroke, clip.Opacity));
+            _sb.Append("</p:spPr></p:pic>");
+        }
+
+        private static string Ms(double seconds) => ((long)Math.Round(Math.Max(0, seconds) * 1000)).ToString(Inv);
+
+        /// <summary>A sound's speaker icon is always drawn for PowerPoint (it hides it in the show itself).</summary>
+        private static Element IconLook(MediaClipElement clip)
+        {
+            if (clip is not AudioElement { HideIcon: true }) return clip;
+            var copy = IO.DeckJson.Clone<Element>(clip);
+            ((AudioElement)copy).HideIcon = false;
+            return copy;
+        }
+
+        /// <summary>An outer shadow (a:effectLst), or nothing.</summary>
+        private string ShadowXml(Shadow? shadow)
+        {
+            if (shadow == null) return "";
+            var dir = (long)Math.Round(((shadow.Angle % 360) + 360) % 360 * 60000);
+            return $"<a:effectLst><a:outerShdw blurRad=\"{Emu(shadow.Blur)}\" dist=\"{Emu(shadow.Distance)}\" dir=\"{dir}\" algn=\"ctr\" rotWithShape=\"0\">{Color(shadow.Color)}</a:outerShdw></a:effectLst>";
         }
 
         private void Transition()
@@ -314,7 +576,7 @@ public static class PptxExporter
             using (var dc = visual.RenderOpen())
             {
                 dc.PushTransform(new ScaleTransform(w / _deck.Width, h / _deck.Height));
-                DecorPainter.Paint(dc, _slide, _style, _ctx, _deck.Width, _deck.Height);
+                DecorPainter.Paint(dc, _slide, _style, _ctx, _deck.Width, _deck.Height, footer: false);
             }
             var bmp = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
             bmp.Render(visual);
@@ -381,7 +643,7 @@ public static class PptxExporter
         private string LineXml(Stroke? stroke, double opacity, ArrowHead start = ArrowHead.None, ArrowHead end = ArrowHead.None)
         {
             if (stroke == null || stroke.Width <= 0) return "<a:ln><a:noFill/></a:ln>";
-            var dash = stroke.Dash switch { DashStyleKind.Dash => "dash", DashStyleKind.Dot => "sysDot", _ => "solid" };
+            var dash = stroke.Dash switch { DashStyleKind.Dash => "dash", DashStyleKind.Dot => "sysDot", DashStyleKind.LongDash => "lgDash", DashStyleKind.DashDot => "dashDot", _ => "solid" };
             string Head(ArrowHead h) => h switch { ArrowHead.Arrow => "triangle", ArrowHead.Dot => "oval", _ => "none" };
             var heads = (start != ArrowHead.None ? $"<a:headEnd type=\"{Head(start)}\" w=\"med\" len=\"med\"/>" : "") +
                         (end != ArrowHead.None ? $"<a:tailEnd type=\"{Head(end)}\" w=\"med\" len=\"med\"/>" : "");
@@ -405,6 +667,13 @@ public static class PptxExporter
                     break;
                 case ShapeElement s when s.IsLine:
                     Line(s);
+                    break;
+                case ShapeElement { Shape: ShapeKind.ActionButton } button:
+                    // Drawn as Stagecraft draws it (the symbol included), keeping its link.
+                    PictureOf(button);
+                    break;
+                case MediaClipElement clip:
+                    Media(clip);
                     break;
                 case ShapeElement s:
                     if (s.Fill.Kind == FillKind.Image)
@@ -446,8 +715,10 @@ public static class PptxExporter
                     $"<a:prstGeom prst=\"wedgeRoundRectCallout\"><a:avLst><a:gd name=\"adj1\" fmla=\"val {(int)Math.Round((callout.TailX - 0.5) * 100000)}\"/><a:gd name=\"adj2\" fmla=\"val {(int)Math.Round((callout.TailY - 0.5) * 100000)}\"/><a:gd name=\"adj3\" fmla=\"val 16667\"/></a:avLst></a:prstGeom>",
                 _ => $"<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
             };
-            _sb.Append($"<p:sp><p:nvSpPr><p:cNvPr id=\"{id}\" name=\"{Name(e, textBox ? "Text" : "Shape")}\"/><p:cNvSpPr{(textBox ? " txBox=\"1\"" : "")}/><p:nvPr/></p:nvSpPr>");
-            _sb.Append("<p:spPr>").Append(Xfrm(e, allowFlip: !textBox)).Append(geometry).Append(FillXml(fill, e.Opacity) ?? "<a:noFill/>").Append(LineXml(stroke, e.Opacity)).Append("</p:spPr>");
+            _spids[e.Id] = id;
+            if (body != null || textBox) _textShapes.Add(id);
+            _sb.Append("<p:sp><p:nvSpPr>").Append(CNvPr(id, Name(e, textBox ? "Text" : "Shape"), null, e.Link)).Append($"<p:cNvSpPr{(textBox ? " txBox=\"1\"" : "")}/><p:nvPr/></p:nvSpPr>");
+            _sb.Append("<p:spPr>").Append(Xfrm(e, allowFlip: !textBox)).Append(geometry).Append(FillXml(fill, e.Opacity) ?? "<a:noFill/>").Append(LineXml(stroke, e.Opacity)).Append(ShadowXml(e.Shadow)).Append("</p:spPr>");
             TextBodyXml(body, e, textBox ? e.Bounds : ElementRenderer.TextBoxOf((ShapeElement)e, e.Bounds), textBox);
             _sb.Append("</p:sp>");
         }
@@ -503,9 +774,9 @@ public static class PptxExporter
                     var pieces = (uppercase ? run.Text.ToUpper(CultureInfo.GetCultureInfo("en-US")) : run.Text).Replace("\r\n", "\n").Split('\n');
                     for (var k = 0; k < pieces.Length; k++)
                     {
-                        if (k > 0) _sb.Append($"<a:br>{RunProps(f, e.Opacity)}</a:br>");
+                        if (k > 0) _sb.Append($"<a:br>{RunProps(f, e.Opacity, body.Shadow, null)}</a:br>");
                         if (pieces[k].Length == 0) continue;
-                        _sb.Append("<a:r>").Append(RunProps(f, e.Opacity)).Append("<a:t>").Append(Esc(pieces[k])).Append("</a:t></a:r>");
+                        _sb.Append("<a:r>").Append(RunProps(f, e.Opacity, body.Shadow, run.Link)).Append("<a:t>").Append(Esc(pieces[k])).Append("</a:t></a:r>");
                     }
                 }
                 _sb.Append($"<a:endParaRPr lang=\"en-US\" sz=\"{FontSize(first.Size)}\" dirty=\"0\"/></a:p>");
@@ -515,7 +786,7 @@ public static class PptxExporter
 
         private static int FontSize(double units) => (int)MathEx.Clamp(Math.Round(units * 50), 100, 400000);
 
-        private string RunProps(TextLayout.RunFormat f, double opacity)
+        private string RunProps(TextLayout.RunFormat f, double opacity, Shadow? shadow, Hyperlink? link)
         {
             var attrs = $" lang=\"en-US\" sz=\"{FontSize(f.Size)}\"";
             if (f.Weight >= 600) attrs += " b=\"1\"";
@@ -524,7 +795,7 @@ public static class PptxExporter
             if (f.Strike) attrs += " strike=\"sngStrike\"";
             var alpha = f.Color.A / 255.0 * opacity;
             var color = alpha >= 0.999 ? $"<a:srgbClr val=\"{Hex(f.Color)}\"/>" : $"<a:srgbClr val=\"{Hex(f.Color)}\"><a:alpha val=\"{(int)Math.Round(alpha * 100000)}\"/></a:srgbClr>";
-            return $"<a:rPr{attrs} dirty=\"0\"><a:solidFill>{color}</a:solidFill><a:latin typeface=\"{Esc(f.Family)}\"/><a:cs typeface=\"{Esc(f.Family)}\"/></a:rPr>";
+            return $"<a:rPr{attrs} dirty=\"0\"><a:solidFill>{color}</a:solidFill>{ShadowXml(shadow)}<a:latin typeface=\"{Esc(f.Family)}\"/><a:cs typeface=\"{Esc(f.Family)}\"/>{HlinkClick(link)}</a:rPr>";
         }
 
         private void Line(ShapeElement s)
@@ -533,7 +804,8 @@ public static class PptxExporter
             var stroke = ElementRenderer.LineStroke(s);
             var end = s.Shape == ShapeKind.Arrow && s.EndHead == ArrowHead.None ? ArrowHead.Arrow : s.EndHead;
             var prst = s.Shape == ShapeKind.Connector && s.Elbow ? "bentConnector3" : "line";
-            _sb.Append($"<p:cxnSp><p:nvCxnSpPr><p:cNvPr id=\"{id}\" name=\"{Name(s, "Line")}\"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>");
+            _spids[s.Id] = id;
+            _sb.Append("<p:cxnSp><p:nvCxnSpPr>").Append(CNvPr(id, Name(s, "Line"), null, s.Link)).Append("<p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>");
             _sb.Append("<p:spPr>").Append(Xfrm(s)).Append($"<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>").Append(LineXml(stroke, s.Opacity, s.StartHead, end)).Append("</p:spPr></p:cxnSp>");
         }
 
@@ -554,19 +826,25 @@ public static class PptxExporter
                 : "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>";
             var id = _nextId++;
             var alpha = img.Opacity < 0.999 ? $"<a:alphaModFix amt=\"{(int)Math.Round(img.Opacity * 100000)}\"/>" : "";
-            _sb.Append($"<p:pic><p:nvPicPr><p:cNvPr id=\"{id}\" name=\"{Name(img, "Picture")}\" descr=\"{Esc(img.AltText ?? "")}\"/><p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>");
+            _spids[img.Id] = id;
+            _sb.Append("<p:pic><p:nvPicPr>").Append(CNvPr(id, Name(img, "Picture"), img.AltText ?? "", img.Link)).Append("<p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>");
             _sb.Append($"<p:blipFill><a:blip r:embed=\"{rid}\">{alpha}</a:blip>");
             _sb.Append(l != 0 || t != 0 || r != 0 || b != 0 ? $"<a:srcRect l=\"{l}\" t=\"{t}\" r=\"{r}\" b=\"{b}\"/>" : "<a:srcRect/>");
             _sb.Append("<a:stretch><a:fillRect/></a:stretch></p:blipFill>");
-            _sb.Append("<p:spPr>").Append(Xfrm(img)).Append(geometry).Append(LineXml(img.Stroke, img.Opacity)).Append("</p:spPr></p:pic>");
+            _sb.Append("<p:spPr>").Append(Xfrm(img)).Append(geometry).Append(LineXml(img.Stroke, img.Opacity)).Append(ShadowXml(img.Shadow)).Append("</p:spPr></p:pic>");
         }
 
         /// <summary>Anything without a native equivalent (charts, icons): a high-resolution picture in its place.</summary>
-        private void PictureOf(Element e)
+        /// <summary>An element drawn as Stagecraft draws it (its shadow included), and the area the picture covers.</summary>
+        private BitmapSource RenderElement(Element e, out Rect bounds)
         {
-            var bounds = e.RotatedBounds;
-            if (bounds.Width < 1 || bounds.Height < 1) return;
-            var scale = Math.Min(3, 3000 / Math.Max(bounds.Width, bounds.Height));
+            bounds = e.RotatedBounds;
+            if (e.Shadow is { } shadow)
+            {
+                var spread = shadow.Blur + shadow.Distance;
+                bounds.Inflate(spread, spread);
+            }
+            var scale = Math.Min(3, 3000 / Math.Max(1, Math.Max(bounds.Width, bounds.Height)));
             var w = (int)Math.Ceiling(bounds.Width * scale);
             var h = (int)Math.Ceiling(bounds.Height * scale);
             var visual = new DrawingVisual();
@@ -579,10 +857,20 @@ public static class PptxExporter
             }
             var bmp = new RenderTargetBitmap(Math.Max(1, w), Math.Max(1, h), 96, 96, PixelFormats.Pbgra32);
             bmp.Render(visual);
+            bmp.Freeze();
+            return bmp;
+        }
+
+        private void PictureOf(Element e)
+        {
+            if (e.RotatedBounds.Width < 1 || e.RotatedBounds.Height < 1) return;
+            var bmp = RenderElement(e, out var bounds);
             var rid = AddImage(MediaStore.EncodePng(bmp), "png");
             var id = _nextId++;
             var descr = e is ChartElement c ? c.KindName + ": " + string.Join(", ", c.Categories) : e.Describe;
-            _sb.Append($"<p:pic><p:nvPicPr><p:cNvPr id=\"{id}\" name=\"{Name(e, e.KindName)}\" descr=\"{Esc(descr)}\"/><p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>");
+            _spids[e.Id] = id;
+            var link = e.Link ?? (e is OnlineVideoElement online && LinkSafety.NormalizeWeb(online.Url) is { } url ? Hyperlink.Web(url, online.Title) : null);
+            _sb.Append("<p:pic><p:nvPicPr>").Append(CNvPr(id, Name(e, e.KindName), descr, link)).Append("<p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>");
             _sb.Append($"<p:blipFill><a:blip r:embed=\"{rid}\"/><a:srcRect/><a:stretch><a:fillRect/></a:stretch></p:blipFill>");
             _sb.Append($"<p:spPr><a:xfrm><a:off x=\"{Emu(bounds.X)}\" y=\"{Emu(bounds.Y)}\"/><a:ext cx=\"{Emu(bounds.Width)}\" cy=\"{Emu(bounds.Height)}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr></p:pic>");
         }
@@ -601,6 +889,7 @@ public static class PptxExporter
             var band = _style.Resolve("bg2");
             var text = _style.Resolve("text");
             var font = Esc(_style.Theme.Fonts.Body);
+            _spids[table.Id] = id;
             _sb.Append($"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id=\"{id}\" name=\"{Name(table, "Table")}\"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>");
             _sb.Append($"<p:xfrm><a:off x=\"{Emu(table.X)}\" y=\"{Emu(table.Y)}\"/><a:ext cx=\"{Emu(table.Width)}\" cy=\"{Emu(table.Height)}\"/></p:xfrm>");
             _sb.Append("<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/table\"><a:tbl>");

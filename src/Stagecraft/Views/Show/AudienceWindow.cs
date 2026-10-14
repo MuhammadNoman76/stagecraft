@@ -53,13 +53,14 @@ public sealed class AudienceWindow : Window
             WindowStartupLocation = WindowStartupLocation.Manual;
         }
 
-        _surface.Attach(controller, acceptsInk: true);
+        _surface.Attach(controller, acceptsInk: true, sound: true);
         PreviewKeyDown += (_, e) =>
         {
             if (_controller.HandleKey(e)) e.Handled = true;
         };
         MouseLeftButtonUp += (_, e) =>
         {
+            if (_controller.Tool == ShowTool.Pointer && !_controller.AtEnd && _surface.HandleClick(e.GetPosition(_surface))) return;
             if (_controller.Tool == ShowTool.Pointer || _controller.Tool == ShowTool.Laser || _controller.AtEnd) _controller.NextStep();
         };
         MouseRightButtonUp += (_, e) =>

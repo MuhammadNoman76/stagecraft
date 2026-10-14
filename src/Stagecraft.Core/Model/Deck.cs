@@ -16,7 +16,7 @@ public static class Ids
 public sealed class Deck
 {
     /// <summary>The deck.json schema this build writes. Older files are migrated on load; newer ones are refused.</summary>
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public const double DefaultWidth = 1920;
     public const double DefaultHeight = 1080;
@@ -29,6 +29,12 @@ public sealed class Deck
     public DeckTheme Theme { get; set; } = new();
     public List<Slide> Slides { get; set; } = new();
     public DeckInfo Info { get; set; } = new();
+
+    /// <summary>Slide numbers, date and footer text on every slide (off by default).</summary>
+    public HeaderFooter Footer { get; set; } = new();
+
+    /// <summary>Guides the user dragged out of the rulers (the editor snaps to them).</summary>
+    public List<GuideLine> Guides { get; set; } = new();
 
     [JsonIgnore]
     public double AspectRatio => Height <= 0 ? 16.0 / 9 : Width / Height;

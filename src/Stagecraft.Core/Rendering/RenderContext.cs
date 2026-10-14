@@ -18,6 +18,9 @@ public sealed class RenderContext
     /// <summary>Editor drawing: empty placeholders show their hint ("Add a title"), empty pictures a drop target.</summary>
     public bool Editing { get; }
 
+    /// <summary>"Today" for automatic footer dates (tests fix it).</summary>
+    public DateTime Now { get; set; } = DateTime.Now;
+
     public SlideStyle StyleFor(Slide slide) => SlideStyle.For(Deck, slide);
 
     /// <summary>The 1-based number shown by themes that print slide numbers (hidden slides don't count).</summary>
@@ -26,8 +29,8 @@ public sealed class RenderContext
         var n = 0;
         foreach (var s in Deck.Slides)
         {
-            if (!s.Hidden || s == slide) n++;
-            if (s == slide) return n;
+            if (!s.Hidden || s.Id == slide.Id) n++;
+            if (s.Id == slide.Id) return n;
         }
         return 0;
     }

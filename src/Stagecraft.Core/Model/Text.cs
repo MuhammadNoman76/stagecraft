@@ -122,6 +122,9 @@ public sealed class TextRun
     public string? Color { get; set; }
     public string? Font { get; set; }
 
+    /// <summary>A link on this text (drawn in the theme's link colour and underlined).</summary>
+    public Hyperlink? Link { get; set; }
+
     public TextRun Clone() => new()
     {
         Text = Text,
@@ -132,9 +135,11 @@ public sealed class TextRun
         Size = Size,
         Color = Color,
         Font = Font,
+        Link = Link?.Clone(),
     };
 
     public bool SameFormat(TextRun other) =>
         Bold == other.Bold && Italic == other.Italic && Underline == other.Underline && Strike == other.Strike &&
-        Nullable.Equals(Size, other.Size) && Color == other.Color && Font == other.Font;
+        Nullable.Equals(Size, other.Size) && Color == other.Color && Font == other.Font &&
+        (Link == null ? other.Link == null : Link.SameAs(other.Link));
 }

@@ -6,6 +6,7 @@ using Stagecraft.Core.Rendering;
 using WpfParagraph = System.Windows.Documents.Paragraph;
 using WpfList = System.Windows.Documents.List;
 using WpfTextElement = System.Windows.Documents.TextElement;
+using Hyperlink = Stagecraft.Core.Model.Hyperlink;
 
 namespace Stagecraft.Views.Editor;
 
@@ -70,6 +71,7 @@ public static class RichTextConverter
             var maxSize = p.Runs.Count == 0 ? d.Size : p.Runs.Max(r => r.Size ?? d.Size);
             para.LineHeight = Math.Max(1, maxSize * d.LineHeight);
             if (p.Align != null) para.TextAlignment = Align(p.Align.Value);
+            System.Windows.Documents.Hyperlink? openLink = null;
             foreach (var r in p.Runs)
             {
                 if (r.Text.Length == 0) continue;
@@ -87,6 +89,19 @@ public static class RichTextConverter
                     if (r.Strike == true) decorations.Add(TextDecorations.Strikethrough);
                     run.TextDecorations = decorations;
                 }
+                if (r.Link != null)
+                {
+                    // Neighbouring runs with the same link share one hyperlink.
+                    if (openLink == null || !(LinkOf(openLink)?.SameAs(r.Link) ?? false))
+                    {
+                        openLink = new System.Windows.Documents.Hyperlink();
+                        Restyle(openLink, r.Link, style);
+                        para.Inlines.Add(openLink);
+                    }
+                    openLink.Inlines.Add(run);
+                    continue;
+                }
+                openLink = null;
                 para.Inlines.Add(run);
             }
 
@@ -218,22 +233,47 @@ public static class RichTextConverter
         }
     }
 
-    private static TextRun ReadRun(Inline inline, string text, Defaults d, SlideStyle style)
+    private static TextRun ReadRun(Inline inline, string text, Defaults d, SlideStyle style, Hyperlink? link = null)
     {
-        var run = new TextRun { Text = text };
+        var run = new TextRun { Text = text, Link = link?.Clone() };
         var weight = inline.FontWeight.ToOpenTypeWeight();
         if (weight != d.Weight) run.Bold = weight >= 600;
         if ((inline.FontStyle != FontStyles.Normal) != d.Italic) run.Italic = inline.FontStyle != FontStyles.Normal;
         if (Math.Abs(inline.FontSize - d.Size) > 0.3) run.Size = Math.Round(inline.FontSize, 1);
-        if (inline.Foreground is SolidColorBrush brush && brush.Color != d.Color) run.Color = ColorRefFor(brush.Color, style);
+        // Linked text shows in the link colour and underlined: that isn't the run's own formatting.
+        var linkColor = Core.Rendering.TextLayout.LinkColorOn(style);
+        if (inline.Foreground is SolidColorBrush brush && brush.Color != d.Color && !(link != null && brush.Color == linkColor)) run.Color = ColorRefFor(brush.Color, style);
         if (inline.FontFamily != null && !SameFamily(inline.FontFamily, d.Family)) run.Font = FamilyName(inline.FontFamily);
         var decorations = inline.TextDecorations;
         if (decorations != null && decorations.Count > 0)
         {
-            if (decorations.Any(x => x.Location == TextDecorationLocation.Underline)) run.Underline = true;
+            if (link == null && decorations.Any(x => x.Location == TextDecorationLocation.Underline)) run.Underline = true;
             if (decorations.Any(x => x.Location == TextDecorationLocation.Strikethrough)) run.Strike = true;
         }
         return run;
+    }
+
+    /// <summary>The link a document hyperlink stands for (kept as JSON in its Tag).</summary>
+    public static Hyperlink? LinkOf(System.Windows.Documents.Hyperlink hl)
+    {
+        try
+        {
+            return hl.Tag is string json ? Core.IO.DeckJson.FromJson<Hyperlink>(json) : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Stores a link on a document hyperlink and gives it the theme's link look.</summary>
+    public static void Restyle(System.Windows.Documents.Hyperlink hl, Hyperlink link, SlideStyle style)
+    {
+        hl.Tag = Core.IO.DeckJson.ToJson(link);
+        hl.NavigateUri = null;
+        hl.Foreground = new SolidColorBrush(Core.Rendering.TextLayout.LinkColorOn(style));
+        hl.TextDecorations = TextDecorations.Underline;
+        hl.ToolTip = (string.IsNullOrWhiteSpace(link.ScreenTip) ? link.Summary : link.ScreenTip) + Environment.NewLine + "Ctrl+click to follow";
     }
 
     private static bool SameFamily(FontFamily a, FontFamily b) => string.Equals(a.Source, b.Source, StringComparison.OrdinalIgnoreCase);

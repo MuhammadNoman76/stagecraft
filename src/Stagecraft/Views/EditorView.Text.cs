@@ -224,6 +224,16 @@ public partial class EditorView
 
     public void SetAutoFit(bool on) => EditText(on ? "Shrink text to fit" : "Don't shrink text", b => b.AutoFit = on, null, null);
 
+    /// <summary>A soft shadow behind the letters (helps text over pictures).</summary>
+    public void SetTextShadow(bool on) => EditText(on ? "Text shadow" : "No text shadow", b => b.Shadow = on ? new Shadow { Color = "#000000@45", Blur = 14, Distance = 3, Angle = 90 } : null, null, null);
+
+    public bool SelectionHasTextShadow => _state.SelectedElements.Any(e => e switch
+    {
+        TextElement t => t.Text.Shadow != null,
+        ShapeElement { Text: { } b } => b.Shadow != null,
+        _ => false,
+    });
+
     public void SetList(ListKind kind)
     {
         var rtb = Canvas.TextEditor;

@@ -146,6 +146,7 @@ public static class LayoutEngine
         slide.Elements.Clear();
         slide.Elements.AddRange(built);
         slide.Elements.AddRange(kept);
+        Animation.AnimationRules.Prune(slide);
     }
 
     /// <summary>
@@ -190,6 +191,7 @@ public static class LayoutEngine
             if (e.Placeholder != "decor" && !result.Contains(e)) result.Add(e);
         slide.Elements.Clear();
         slide.Elements.AddRange(result);
+        Animation.AnimationRules.Prune(slide);
     }
 
     private static List<Element> Build(Deck deck, Slide slide, string layoutId, LayoutContent content)
@@ -270,7 +272,6 @@ public static class LayoutEngine
                 e.Id = old.Id;
                 e.MorphKey = old.MorphKey;
                 e.Name = old.Name;
-                e.Build = old.Build?.Clone();
             }
         }
 

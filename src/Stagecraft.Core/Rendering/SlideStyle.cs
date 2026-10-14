@@ -32,6 +32,13 @@ public sealed class SlideStyle
 
     public bool IsDark => Scheme.IsDark;
 
+    private string? _signature;
+
+    /// <summary>Identifies everything that decides colours and fonts here (cache keys of drawn effects use it).</summary>
+    public string Signature => _signature ??= string.Join("|", Theme.Id, Theme.Variant, string.Join(",", Theme.Accents), Scheme.Text, Scheme.TextMuted,
+        Scheme.Surface, Scheme.Accent ?? "", Scheme.Background.Color, Theme.Fonts.Heading, Theme.Fonts.Body, Theme.Fonts.HeadingWeight, Theme.Fonts.BodyWeight,
+        Scale.ToString("F4", CultureInfo.InvariantCulture), IsEmphasis);
+
     public static SlideStyle For(Deck deck, Slide slide) => For(deck.Theme, slide, deck.Height);
 
     public static SlideStyle For(DeckTheme theme, Slide slide, double slideHeight)

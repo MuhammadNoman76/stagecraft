@@ -35,6 +35,38 @@ public sealed class EditorState
     /// <summary>Raised while elements change interactively (drag, resize) so panels can refresh numbers cheaply.</summary>
     public event Action? LiveChange;
 
+    /// <summary>The panel on the right shows the animation pane: the canvas shows click badges and motion paths.</summary>
+    public bool AnimationMode { get; private set; }
+
+    public event Action? AnimationModeChanged;
+
+    public void SetAnimationMode(bool on)
+    {
+        if (AnimationMode == on) return;
+        AnimationMode = on;
+        AnimationModeChanged?.Invoke();
+    }
+
+    private readonly HashSet<string> _effects = new();
+
+    /// <summary>Animations selected in the animation pane (ids of the current slide's effects).</summary>
+    public IReadOnlyCollection<string> SelectedEffects => _effects;
+
+    public event Action? EffectSelectionChanged;
+
+    public void SelectEffects(IEnumerable<string> ids)
+    {
+        var list = ids.ToList();
+        if (_effects.SetEquals(list)) return;
+        _effects.Clear();
+        foreach (var id in list) _effects.Add(id);
+        EffectSelectionChanged?.Invoke();
+    }
+
+    /// <summary>The selected effects that still exist, in the slide's order.</summary>
+    public List<AnimationEffect> SelectedEffectList =>
+        CurrentSlide == null ? new List<AnimationEffect>() : CurrentSlide.Animations.Where(a => _effects.Contains(a.Id)).ToList();
+
     public RenderContext RenderContext => new(Session.Deck, Session.Media, editing: true);
 
     public SlideStyle? Style => CurrentSlide == null ? null : SlideStyle.For(Deck, CurrentSlide);
@@ -67,6 +99,7 @@ public sealed class EditorState
         if (changed)
         {
             _selection.Clear();
+            _effects.Clear();
             EnteredGroup = null;
             CurrentSlideChanged?.Invoke();
             SelectionChanged?.Invoke();
@@ -87,6 +120,10 @@ public sealed class EditorState
         var before = _selection.Count;
         if (CurrentSlide == null) _selection.Clear();
         else _selection.RemoveWhere(id => CurrentSlide.Find(id) == null);
+        var effectsBefore = _effects.Count;
+        if (CurrentSlide == null) _effects.Clear();
+        else _effects.RemoveWhere(id => !CurrentSlide.Animations.Any(a => a.Id == id));
+        if (_effects.Count != effectsBefore) EffectSelectionChanged?.Invoke();
         if (_selection.Count != before) SelectionChanged?.Invoke();
     }
 

@@ -33,4 +33,9 @@
     <ProjectReference Include="..\..\src\Stagecraft.Core\Stagecraft.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tiny generated test media (ffmpeg test patterns and tones, see tools\make-sample-media.ps1). -->
+    <None Include="Media\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

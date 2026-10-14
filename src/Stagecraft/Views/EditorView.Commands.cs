@@ -1,10 +1,12 @@
 using System.Windows.Input;
 using Stagecraft.Core.Editing;
+using Stagecraft.Core.Animation;
 using Stagecraft.Core.Layouts;
 using Stagecraft.Core.Model;
 using Stagecraft.Core.Themes;
 using Stagecraft.Services;
 using Stagecraft.Themes;
+using Stagecraft.Views.Editor;
 
 namespace Stagecraft.Views;
 
@@ -127,6 +129,8 @@ public partial class EditorView
             new("Edit", "Delete", () => Delete(), new KeyChord(Key.Delete), "Icon.Delete", "remove") { CanExecute = () => HasSlide },
             new("Edit", "Delete", () => Delete(), new KeyChord(Key.Back), "Icon.Delete") { CanExecute = () => HasSlide && (HasSelection || RailFocused), InPalette = false },
             new("Edit", "Select all", () => SelectAll(), new KeyChord(Key.A, C), null) { CanExecute = () => HasSlide },
+            new("Edit", "Find…", () => OpenFind(replace: false), new KeyChord(Key.F, C), "Icon.Search", "search text look for") { WorksWhileTyping = true, WorksInSlideText = true },
+            new("Edit", "Replace…", () => OpenFind(replace: true), new KeyChord(Key.H, C), "Icon.ArrowSwap", "find change text") { WorksWhileTyping = true, WorksInSlideText = true },
             new("Edit", "Copy style", () => StartFormatPainter(), new KeyChord(Key.C, C | A), "Icon.PaintBrush", "format painter") { CanExecute = () => HasSelection },
             new("Edit", "Paste style", () => PasteStyle(), new KeyChord(Key.V, C | A), "Icon.PaintBrush", "format painter") { CanExecute = () => HasSelection && _copiedStyle != null },
             new("Edit", "Lock or unlock", () => ToggleLock(), new KeyChord(Key.L, C | S), "Icon.LockClosed") { CanExecute = () => HasSelection },
@@ -151,6 +155,34 @@ public partial class EditorView
             new("Insert", "Pie chart", () => InsertChart(ChartKind.Pie), null, "Icon.DataPie", "graph share data") { CanExecute = () => HasSlide },
             new("Insert", "Donut chart", () => InsertChart(ChartKind.Donut), null, "Icon.DataUsage", "graph ring share data") { CanExecute = () => HasSlide },
             new("Insert", "Table", () => InsertTable(), null, "Icon.Table", "grid rows columns") { CanExecute = () => HasSlide },
+            new("Insert", "Header and footer…", () => EditHeaderFooter(), null, "Icon.DocumentHeaderFooter", "slide numbers page number date footer text") { CanExecute = () => HasSlide },
+            new("Insert", "Link…", () => InsertLink(), new KeyChord(Key.K, C | S), "Icon.Link", "hyperlink url web address e-mail mailto slide jump file") { CanExecute = () => HasSlide, WorksInSlideText = true },
+            new("Insert", "Remove link", () => RemoveLinks(), null, "Icon.LinkDismiss", "hyperlink unlink") { CanExecute = () => Canvas.IsEditingText || SelectionHasLink, WorksInSlideText = true },
+            new("Insert", "Open link", () => { if (FirstLink() is { } l) FollowLink(l); }, null, "Icon.Open", "hyperlink follow go") { CanExecute = () => FirstLink() != null },
+            new("Insert", "Video…", () => InsertVideo(), null, "Icon.VideoClip", "movie film clip mp4 media") { CanExecute = () => HasSlide },
+            new("Insert", "Sound…", () => InsertAudio(), null, "Icon.Speaker2", "audio music mp3 media") { CanExecute = () => HasSlide },
+            new("Insert", "Online video…", () => InsertOnlineVideo(), null, "Icon.GlobeVideo", "youtube vimeo web link media") { CanExecute = () => HasSlide },
+            new("Insert", "Action button: Back", () => InsertActionButton(ActionButtonKind.Previous), null, "Icon.ArrowLeft", "previous slide navigation") { CanExecute = () => HasSlide },
+            new("Insert", "Action button: Next", () => InsertActionButton(ActionButtonKind.Next), null, "Icon.ArrowRight", "forward slide navigation") { CanExecute = () => HasSlide },
+            new("Insert", "Action button: First slide", () => InsertActionButton(ActionButtonKind.First), null, "Icon.Previous", "beginning home navigation") { CanExecute = () => HasSlide },
+            new("Insert", "Action button: Last slide", () => InsertActionButton(ActionButtonKind.Last), null, "Icon.Next", "end navigation") { CanExecute = () => HasSlide },
+            new("Insert", "Action button: Return", () => InsertActionButton(ActionButtonKind.Return), null, "Icon.ArrowUndo", "last viewed back navigation") { CanExecute = () => HasSlide },
+            new("Insert", "Action button: Link…", () => InsertActionButton(ActionButtonKind.Custom), null, "Icon.Link", "web page file navigation") { CanExecute = () => HasSlide },
+
+            // Picture and media
+            new("Picture", "Crop picture", () => StartCrop(), null, "Icon.Crop", "trim cut edges image") { CanExecute = () => _state.SingleSelection is ImageElement { Media: not null } },
+            new("Picture", "Replace picture…", () => { if (_state.SingleSelection is ImageElement i) ReplaceImage(i); }, null, "Icon.ImageAdd", "change image photo") { CanExecute = () => _state.SingleSelection is ImageElement },
+            new("Media", "Trim video or sound…", () => { if (_state.SingleSelection is MediaClipElement m) TrimMedia(m); }, null, "Icon.Cut", "shorten start end clip") { CanExecute = () => _state.SingleSelection is MediaClipElement },
+            new("Media", "Poster frame…", () => { if (_state.SingleSelection is VideoElement v) ChoosePoster(v); }, null, "Icon.FilmstripImage", "cover thumbnail picture video") { CanExecute = () => _state.SingleSelection is VideoElement },
+
+            // Animation
+            new("Animation", "Animation pane", () => ShowAnimations(Panel.Mode != PanelMode.Animations), null, "Icon.StarEmphasis", "effects order timing builds") { CanExecute = () => HasSlide },
+            new("Animation", "Copy animation (animation painter)", () => StartAnimationPainter(), new KeyChord(Key.C, A | S), "Icon.PaintBrush", "painter effects") { CanExecute = () => HasSelection },
+            new("Animation", "Paste animation", () => PasteAnimation(), null, "Icon.PaintBrush", "painter effects") { CanExecute = () => HasSelection && _copiedAnimations != null },
+            new("Animation", "Remove animations from the selection", () => RemoveAnimationsOfSelection(), null, "Icon.Delete", "effects none") { CanExecute = () => _state.CurrentSlide is { } s && Core.Animation.AnimationRules.EffectsOf(s, _state.SelectedElements).Any() },
+            new("Animation", "Move animation earlier", () => NudgeEffects(-1), null, "Icon.ArrowUp", "order reorder") { CanExecute = () => _state.SelectedEffects.Count > 0 },
+            new("Animation", "Move animation later", () => NudgeEffects(1), null, "Icon.ArrowDown", "order reorder") { CanExecute = () => _state.SelectedEffects.Count > 0 },
+            new("Animation", "Play from the selected animation", () => PlayFromSelected(), null, "Icon.Play", "preview effects") { CanExecute = () => _state.SelectedEffects.Count > 0 },
 
             // Arrange
             new("Arrange", "Group", () => GroupSelection(), new KeyChord(Key.G, C), "Icon.Group") { CanExecute = () => _state.Selection.Count > 1 },
@@ -199,6 +231,12 @@ public partial class EditorView
             new("View", "Show or hide speaker notes", () => SetNotesVisible(NotesPane.Visibility != System.Windows.Visibility.Visible), null, "Icon.Note"),
             new("View", "Design: themes and colours", () => ShowDesign(DesignToggle.IsChecked != true), null, "Icon.Color", "theme palette style look"),
             new("View", "Turn smart guides on or off", () => ToggleSnapping(), null, "Icon.Ruler", "snap snapping guides"),
+            new("View", "Show or hide rulers", () => ToggleRulers(), null, "Icon.Ruler", "measure inches centimetres"),
+            new("View", "Show or hide gridlines", () => ToggleGrid(), new KeyChord(Key.F9, S), "Icon.Grid", "grid lines"),
+            new("View", "Snap to grid on or off", () => ToggleSnapToGrid(), null, "Icon.Grid", "align grid"),
+            new("View", "Add vertical guide", () => Canvas.AddGuide(vertical: true), null, "Icon.Add", "guide line align") { CanExecute = () => HasSlide },
+            new("View", "Add horizontal guide", () => Canvas.AddGuide(vertical: false), null, "Icon.Add", "guide line align") { CanExecute = () => HasSlide },
+            new("View", "Remove all guides", () => RemoveAllGuides(), null, "Icon.Delete", "guide lines") { CanExecute = () => Session.Deck.Guides.Count > 0 },
             new("View", "Next slide", () => GoRelative(1), new KeyChord(Key.Next), "Icon.ChevronDown") { CanExecute = () => !HasSelection && !RailFocused },
             new("View", "Previous slide", () => GoRelative(-1), new KeyChord(Key.Prior), "Icon.ChevronUp") { CanExecute = () => !HasSelection && !RailFocused },
 
@@ -217,10 +255,22 @@ public partial class EditorView
             new("Present", "Present from this slide", () => Present(fromCurrent: true), new KeyChord(Key.F5, S), "Icon.Play", "slide show current") { WorksWhileTyping = true, WorksInSlideText = true },
             new("Present", "Presenter view on this screen", () => Present(fromCurrent: true, presenterOnly: true), new KeyChord(Key.F5, A), "Icon.Presenter", "rehearse single screen") { WorksWhileTyping = true },
             new("Present", "Rehearse timings", () => Present(fromCurrent: false, presenterOnly: true, rehearse: true), null, "Icon.Timer", "practice time clock"),
-            new("Present", "Preview animations on this slide", () => PreviewBuilds(), null, "Icon.Play", "builds effects") { CanExecute = () => HasSlide },
+            new("Present", "Preview animations on this slide", () => PreviewAnimations(), null, "Icon.Play", "builds effects play") { CanExecute = () => HasSlide },
             new("Present", "Preview transition", () => PreviewTransition(), null, "Icon.SlideTransition", "morph fade push") { CanExecute = () => HasSlide },
         };
 
+        foreach (var cls in new[] { EffectClass.Entrance, EffectClass.Emphasis, EffectClass.Exit, EffectClass.Motion })
+        {
+            var prefix = cls switch { EffectClass.Entrance => "Entrance", EffectClass.Emphasis => "Emphasis", EffectClass.Exit => "Exit", _ => "Motion path" };
+            foreach (var kind in EffectCatalog.KindsOf(cls))
+            {
+                var (c, k) = (cls, kind);
+                list.Add(new AppCommand("Animation", $"Animate: {prefix} – {EffectCatalog.Name(c, k)}", () => AddAnimation(c, k), null, "Icon.StarEmphasis", "add animation effect " + prefix.ToLowerInvariant())
+                {
+                    CanExecute = () => HasSelection,
+                });
+            }
+        }
         foreach (var layout in LayoutEngine.All)
         {
             var id = layout.Id;

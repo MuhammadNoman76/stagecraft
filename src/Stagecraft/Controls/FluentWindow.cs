@@ -46,20 +46,15 @@ public class FluentWindow : Window
         if (monitor == null) return;
         var work = monitor.WorkArea;
         var scale = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice.M11 ?? monitor.DpiScale;
-        if (MinWidth * scale > work.Width || MinHeight * scale > work.Height)
+        var fit = Core.Editing.ScreenFit.KeepInside(new Rect(r.Left, r.Top, r.Width, r.Height), new Rect(work.Left, work.Top, work.Width, work.Height),
+            new Size(MinWidth * scale, MinHeight * scale), ResizeMode is ResizeMode.CanResize or ResizeMode.CanResizeWithGrip, out var maximize);
+        if (maximize)
         {
-            if (ResizeMode is ResizeMode.CanResize or ResizeMode.CanResizeWithGrip)
-            {
-                WindowState = WindowState.Maximized;
-                return;
-            }
+            WindowState = WindowState.Maximized;
+            return;
         }
-        var width = Math.Min(r.Width, work.Width);
-        var height = Math.Min(r.Height, work.Height);
-        var left = MathEx.Clamp(r.Left, work.Left, work.Right - width);
-        var top = MathEx.Clamp(r.Top, work.Top, work.Bottom - height);
-        if (left == r.Left && top == r.Top && width == r.Width && height == r.Height) return;
-        Native.SetWindowPos(_hwnd, IntPtr.Zero, left, top, width, height, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+        if (fit is not { } f) return;
+        Native.SetWindowPos(_hwnd, IntPtr.Zero, (int)Math.Round(f.Left), (int)Math.Round(f.Top), (int)Math.Round(f.Width), (int)Math.Round(f.Height), Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
     }
 
     /// <summary>Dialog frame: no minimize / maximize buttons, not in the taskbar when it has an owner.</summary>

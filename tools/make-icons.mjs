@@ -135,9 +135,14 @@ const ui = [
   'zoom_in', 'zoom_out', 'zoom_fit', 'board', 'text_bullet_list_square', 'note', 'notepad', 'play', 'play_circle', 'pause',
   'stop', 'next', 'previous', 'presenter', 'pen', 'highlight', 'laser_tool', 'inking_tool', 'eraser', 'desktop', 'cursor',
   'flash', 'video', 'record', 'calendar', 'people', 'person', 'lightbulb', 'rocket', 'star', 'library',
+  // 1.1: animation, links, video and sound, page furniture, image tools, view aids
+  'star_emphasis', 'cursor_click', 'arrow_curve_up_right', 'hand_draw', 'arrow_repeat_all', 're_order_dots_vertical', 'tap_single',
+  'link', 'link_dismiss', 'mail', 'slide_link', 'document_link', 'video_clip', 'speaker_2', 'speaker_mute', 'music_note_2', 'globe_video',
+  'filmstrip_image', 'document_header_footer', 'number_symbol', 'calendar_ltr', 'text_footnote', 'arrow_swap', 'text_proofing_tools',
+  'crop', 'image_shadow', 'text_effects', 'text_whole_word', 'text_case_title', 'border_outside_thick',
 ];
 const uiFilled = ['play', 'pause', 'star', 'heart', 'pin', 'lock_closed', 'checkmark_circle', 'warning', 'error_circle', 'info',
-  'circle', 'square', 'presenter', 'record', 'sparkle', 'eye'];
+  'circle', 'square', 'presenter', 'record', 'sparkle', 'eye', 'speaker_2', 'play_circle'];
 
 function uiIcon(name, style) {
   for (const size of [20, 24, 16]) {
@@ -241,7 +246,7 @@ for (const key of ['arrow_trending_lines', 'arrow_right', 'arrow_up', 'arrow_dow
   'shield_checkmark', 'checkmark_starburst', 'people_add', 'trophy', 'ribbon', 'target_arrow', 'music_note_1', 'music_note_2',
   'data_bar_vertical', 'data_bar_horizontal', 'vehicle_car', 'vehicle_bicycle', 'vehicle_truck', 'weather_sunny', 'weather_moon',
   'weather_cloudy', 'weather_rain', 'weather_snow', 'tree_deciduous', 'tree_evergreen', 'puzzle_piece', 'savings', 'wallet',
-  'receipt', 'speedometer', 'scales', 'toolbox', 'wrench', 'shield', 'star', 'target', 'timeline', 'trophy']) {
+  'receipt', 'speedometer', 'scales', 'toolbox', 'wrench', 'shield', 'star', 'target', 'timeline', 'trophy', 'speaker_2']) {
   const f = path.join(iconsDir, `${key}_24_regular.svg`);
   if (fs.existsSync(f) && !catalogue.some((l) => l.startsWith(key + '\t'))) {
     catalogue.push(`${key}\t${(synonyms[key] || '').trim()}\t${readIcon(f)}`);

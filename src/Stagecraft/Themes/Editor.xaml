@@ -390,4 +390,39 @@
             </Setter.Value>
         </Setter>
     </Style>
+
+    <!-- Outline pictograms for picture and video shapes (the icon set has no sharp rectangle). -->
+    <Geometry x:Key="Icon.ShapeRectangle">F0 M 2.5 5 H 17.5 V 15 H 2.5 Z M 3.5 6 V 14 H 16.5 V 6 Z</Geometry>
+    <Geometry x:Key="Icon.ShapeRounded">F0 M 5.5 5 H 14.5 A 3 3 0 0 1 17.5 8 V 12 A 3 3 0 0 1 14.5 15 H 5.5 A 3 3 0 0 1 2.5 12 V 8 A 3 3 0 0 1 5.5 5 Z M 5.5 6 A 2 2 0 0 0 3.5 8 V 12 A 2 2 0 0 0 5.5 14 H 14.5 A 2 2 0 0 0 16.5 12 V 8 A 2 2 0 0 0 14.5 6 Z</Geometry>
+
+    <!-- A page choice in a dialog's side list (link kinds): like the navigation of Windows 11 settings. -->
+    <Style x:Key="NavItem" TargetType="RadioButton">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}" />
+        <Setter Property="Foreground" Value="{DynamicResource Text.Primary}" />
+        <Setter Property="MinHeight" Value="38" />
+        <Setter Property="Padding" Value="14,7,10,7" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Grid>
+                        <Border x:Name="Bd" CornerRadius="{StaticResource ControlCorner}" Background="Transparent" />
+                        <Border x:Name="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Margin="1,0,0,0" Background="{DynamicResource Accent.Fill}" Visibility="Collapsed" />
+                        <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Subtle.FillSecondary}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Subtle.FillSecondary}" />
+                            <Setter TargetName="Pill" Property="Visibility" Value="Visible" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 </ResourceDictionary>

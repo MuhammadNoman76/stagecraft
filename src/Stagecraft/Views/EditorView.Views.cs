@@ -5,6 +5,7 @@ using Stagecraft.Controls;
 using Stagecraft.Core.Editing;
 using Stagecraft.Core.Layouts;
 using Stagecraft.Core.Model;
+using Stagecraft.Services;
 using Stagecraft.Views.Editor;
 
 namespace Stagecraft.Views;
@@ -104,6 +105,92 @@ public partial class EditorView
         palette.Open();
     }
 
+
+    // ------------------------------------------------------------------ rulers, gridlines, guides
+
+    private void OnViewAidsMenu(object sender, RoutedEventArgs e)
+    {
+        var s = AppSettings.Current;
+        var menu = new ContextMenu { PlacementTarget = ViewAidsButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Top };
+        MenuItem Check(string header, bool on, Action toggle, string gesture = "")
+        {
+            var mi = new MenuItem { Header = header, IsCheckable = true, IsChecked = on, InputGestureText = gesture };
+            mi.Click += (_, _) => toggle();
+            menu.Items.Add(mi);
+            return mi;
+        }
+        Check("Rulers", s.ShowRulers, ToggleRulers);
+        Check("Gridlines", s.ShowGrid, ToggleGrid, "Shift+F9");
+        Check("Snap to grid", s.SnapToGrid, ToggleSnapToGrid);
+        Check("Smart guides", s.SnapToGuides, ToggleSnapping);
+        var spacing = new MenuItem { Header = "Grid spacing" };
+        foreach (var (label, value) in GridSpacings())
+        {
+            var v = value;
+            var mi = new MenuItem { Header = label, IsCheckable = true, IsChecked = Math.Abs(s.GridSize - v) < 0.01 };
+            mi.Click += (_, _) => AppSettings.Update(x => x.GridSize = v);
+            spacing.Items.Add(mi);
+        }
+        menu.Items.Add(spacing);
+        menu.Items.Add(new Separator());
+        void Item(string header, string icon, Action action, bool enabled = true)
+        {
+            var mi = new MenuItem { Header = header, IsEnabled = enabled };
+            Ui.SetIcon(mi, (Geometry)FindResource(icon));
+            mi.Click += (_, _) => action();
+            menu.Items.Add(mi);
+        }
+        Item("Add vertical guide", "Icon.Add", () => Canvas.AddGuide(vertical: true), HasSlide);
+        Item("Add horizontal guide", "Icon.Add", () => Canvas.AddGuide(vertical: false), HasSlide);
+        Item("Remove all guides", "Icon.Delete", RemoveAllGuides, Session.Deck.Guides.Count > 0);
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Grid spacings that divide the slide evenly, in the user's units.</summary>
+    private static IEnumerable<(string Label, double Value)> GridSpacings()
+    {
+        if (SlideCanvas.Metric)
+        {
+            yield return ("0.25 cm", 144 / 2.54 * 0.25);
+            yield return ("0.5 cm", 144 / 2.54 * 0.5);
+            yield return ("1 cm", 144 / 2.54);
+            yield return ("2 cm", 144 / 2.54 * 2);
+        }
+        else
+        {
+            yield return ("1/8 in", 18);
+            yield return ("1/4 in", 36);
+            yield return ("1/2 in", 72);
+            yield return ("1 in", 144);
+        }
+        yield return ("Default", 40);
+    }
+
+    private void ToggleRulers()
+    {
+        var on = !AppSettings.Current.ShowRulers;
+        AppSettings.Update(x => x.ShowRulers = on);
+    }
+
+    private void ToggleGrid()
+    {
+        var on = !AppSettings.Current.ShowGrid;
+        AppSettings.Update(x => x.ShowGrid = on);
+    }
+
+    private void ToggleSnapToGrid()
+    {
+        var on = !AppSettings.Current.SnapToGrid;
+        AppSettings.Update(x => x.SnapToGrid = on);
+        _window.ShowMessage(on ? "Things now snap to the grid. Hold Alt while dragging to skip it once." : "Snap to grid is off.", 3);
+    }
+
+    private void RemoveAllGuides()
+    {
+        if (Session.Deck.Guides.Count == 0) return;
+        Session.EditStructure("Remove guides", d => d.Guides.Clear(), redrawSlides: false);
+        Canvas.ApplyViewAids();
+    }
     // ------------------------------------------------------------------ canvas context menu
 
     private void ShowCanvasMenu(Point at)
@@ -134,6 +221,14 @@ public partial class EditorView
                     break;
                 case ImageElement image:
                     Item(menu, image.Media == null ? "Choose picture…" : "Replace picture…", "Icon.ImageAdd", () => ReplaceImage(image), "Enter");
+                    if (image.Media != null) Item(menu, "Crop", "Icon.Crop", () => StartCrop(image));
+                    break;
+                case MediaClipElement clip:
+                    Item(menu, "Trim…", "Icon.Cut", () => TrimMedia(clip));
+                    if (clip is VideoElement video) Item(menu, "Poster frame…", "Icon.FilmstripImage", () => ChoosePoster(video));
+                    break;
+                case OnlineVideoElement online:
+                    Item(menu, "Open the video page", "Icon.Open", () => FollowLink(Core.Model.Hyperlink.Web(online.Url)));
                     break;
                 case IconElement icon:
                     Item(menu, "Change icon…", "Icon.Icons", () => PickIcon(icon), "Enter");
@@ -165,6 +260,21 @@ public partial class EditorView
             }
             if (selected.Any(e => e.GroupId != null)) Item(menu, "Ungroup", "Icon.GroupDismiss", UngroupSelection, "Ctrl+Shift+G");
             if (selected.Count == 2 && selected.All(e => !(e is ShapeElement { IsLine: true }))) Item(menu, "Connect with an arrow", "Icon.Connector", InsertConnector);
+            menu.Items.Add(new Separator());
+            var link = FirstLink();
+            Item(menu, link != null ? "Edit link…" : "Link…", "Icon.Link", InsertLink, "Ctrl+Shift+K");
+            if (link != null)
+            {
+                Item(menu, "Open link", "Icon.Open", () => FollowLink(link), "Ctrl+click");
+                Item(menu, "Remove link", "Icon.LinkDismiss", RemoveLinks);
+            }
+            var anim = Item(menu, "Animation", "Icon.StarEmphasis", () => { });
+            var hasEffects = _state.CurrentSlide is { } cs && Core.Animation.AnimationRules.EffectsOf(cs, selected).Any();
+            Item(anim, "Add animation…", "Icon.Add", () => { ShowAnimations(true); Dispatcher.BeginInvoke(new Action(() => Panel.OpenAddAnimation()), System.Windows.Threading.DispatcherPriority.Loaded); });
+            Item(anim, "Animation pane", "Icon.TextBulletListSquare", () => ShowAnimations(true));
+            Item(anim, "Copy animation", "Icon.PaintBrush", StartAnimationPainter, "Alt+Shift+C", hasEffects);
+            Item(anim, "Paste animation", "Icon.PaintBrush", PasteAnimation, "", _copiedAnimations != null);
+            Item(anim, "Remove animations", "Icon.Delete", RemoveAnimationsOfSelection, "", hasEffects);
             menu.Items.Add(new Separator());
             Item(menu, "Copy style", "Icon.PaintBrush", StartFormatPainter, "Ctrl+Alt+C");
             Item(menu, "Paste style", "Icon.PaintBrush", PasteStyle, "Ctrl+Alt+V", _copiedStyle != null);

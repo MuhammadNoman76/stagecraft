@@ -39,7 +39,7 @@ public sealed class PresenterWindow : FluentWindow
     private double _notesSize;
     private bool _closingFromShow;
 
-    internal PresenterWindow(SlideShowController controller, Native.MonitorInfo? monitor, bool windowed)
+    internal PresenterWindow(SlideShowController controller, Native.MonitorInfo? monitor, bool windowed, bool sound = false)
     {
         _controller = controller;
         _monitor = windowed ? null : monitor;
@@ -175,10 +175,11 @@ public sealed class PresenterWindow : FluentWindow
         root.Children.Add(main);
         Content = root;
 
-        _surface.Attach(controller, acceptsInk: true);
-        _surface.MouseLeftButtonUp += (_, _) =>
+        _surface.Attach(controller, acceptsInk: true, sound);
+        _surface.MouseLeftButtonUp += (_, e) =>
         {
-            if (_controller.Tool is ShowTool.Pointer) _controller.NextStep();
+            if (_controller.Tool is not ShowTool.Pointer) return;
+            if (!_surface.HandleClick(e.GetPosition(_surface))) _controller.NextStep();
         };
         controller.SlideChanged += (_, _, _) => Update();
         controller.StepAdvanced += _ => Update();
@@ -298,7 +299,7 @@ public sealed class PresenterWindow : FluentWindow
         var steps = c.StepCount(c.Current);
         var status = new List<string>();
         if (c.Digits.Length > 0) status.Add($"Go to slide {c.Digits}…  (Enter)");
-        if (steps > 0 && !c.AtEnd) status.Add($"Animation {c.Step} of {steps}");
+        if (steps > 0 && !c.AtEnd) status.Add($"Click {c.Step} of {steps}");
         if (c.Blank != BlankMode.None) status.Add(c.Blank == BlankMode.Black ? "Black screen" : "White screen");
         if (c.Options.Rehearse) status.Add("Rehearsing: timings are recorded");
         _status.Text = string.Join("   ·   ", status);
@@ -308,7 +309,7 @@ public sealed class PresenterWindow : FluentWindow
         _notes.Opacity = c.Current?.Notes is { Length: > 0 } ? 1 : 0.5;
 
         var nextSlide = c.Step < steps ? c.Current : c.Next;
-        _nextLabel.Text = c.Step < steps ? "Next: animation on this slide" : c.Next != null ? $"Next: slide {c.Index + 2}" : "Next: end of the show";
+        _nextLabel.Text = c.Step < steps ? $"Next: click {c.Step + 1} of {steps}" : c.Next != null ? $"Next: slide {c.Index + 2}" : "Next: end of the show";
         _next.Source = nextSlide != null ? SlideRenderer.Render(nextSlide, c.Context, 640) : null;
 
         foreach (var (tool, toggle) in _tools) toggle.IsChecked = c.Tool == tool;

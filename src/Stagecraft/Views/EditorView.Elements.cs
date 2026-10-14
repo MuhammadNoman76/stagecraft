@@ -33,6 +33,21 @@ public partial class EditorView
         }, mergeKey);
     }
 
+    /// <summary>Like <see cref="EditSelected"/>, with the slide too (for changes that also touch its animations).</summary>
+    public void EditSlideSelection(string label, Action<Slide, List<Element>> change)
+    {
+        var slide = _state.CurrentSlide;
+        if (slide == null) return;
+        if (Canvas.IsEditingText) Canvas.CommitTextEdit();
+        var ids = _state.Selection.ToList();
+        if (ids.Count == 0) return;
+        Session.EditSlide(slide, label, s =>
+        {
+            change(s, s.Elements.Where(e => ids.Contains(e.Id)).ToList());
+            DeckOperations.UpdateConnectors(s);
+        });
+    }
+
     /// <summary>Ends merging (after a slider drag), so the next change is a new undo step.</summary>
     public void SealHistory() => Session.History.Seal();
 
@@ -151,6 +166,26 @@ public partial class EditorView
         Item("Arrow", "Icon.ArrowRight", () => InsertShape(ShapeKind.Arrow));
         Item("Connector", "Icon.Connector", InsertConnector);
         Item("Callout", "Icon.Chat", () => InsertShape(ShapeKind.Callout));
+        menu.Items.Add(new Separator());
+        var actions = new MenuItem { Header = "Action button" };
+        Ui.SetIcon(actions, (Geometry)FindResource("Icon.CursorClick"));
+        foreach (var (kind, header, icon) in new[]
+        {
+            (ActionButtonKind.Previous, "Back", "Icon.ArrowLeft"),
+            (ActionButtonKind.Next, "Next", "Icon.ArrowRight"),
+            (ActionButtonKind.First, "First slide", "Icon.Previous"),
+            (ActionButtonKind.Last, "Last slide", "Icon.Next"),
+            (ActionButtonKind.Return, "Return to the last slide viewed", "Icon.ArrowUndo"),
+            (ActionButtonKind.Custom, "Link button…", "Icon.Link"),
+        })
+        {
+            var k = kind;
+            var mi = new MenuItem { Header = header };
+            Ui.SetIcon(mi, (Geometry)FindResource(icon));
+            mi.Click += (_, _) => InsertActionButton(k);
+            actions.Items.Add(mi);
+        }
+        menu.Items.Add(actions);
         menu.IsOpen = true;
     }
 
@@ -416,6 +451,7 @@ public partial class EditorView
                 if (c.StartId != null && ids.Contains(c.StartId)) c.StartId = null;
                 if (c.EndId != null && ids.Contains(c.EndId)) c.EndId = null;
             }
+            Core.Animation.AnimationRules.Prune(s);
         });
         _state.ClearSelection();
     }
@@ -437,11 +473,13 @@ public partial class EditorView
         var slide = _state.CurrentSlide;
         var selected = _state.SelectedElements;
         if (slide == null || selected.Count == 0) return;
-        var copies = DeckOperations.CopyElements(selected, 24, 24);
+        var copies = DeckOperations.CopyElements(selected, 24, 24, out var idMap);
+        var effects = Core.Animation.AnimationRules.CopyFor(Core.Animation.AnimationRules.EffectsOf(slide, selected), idMap);
         Session.EditSlide(slide, "Duplicate", s =>
         {
             var at = selected.Max(e => s.Elements.FindIndex(x => x.Id == e.Id)) + 1;
             s.Elements.InsertRange(at, copies);
+            s.Animations.AddRange(effects);
         });
         _state.Select(copies.Select(c => c.Id));
     }
@@ -560,14 +598,14 @@ public partial class EditorView
     public void GroupSelection()
     {
         if (_state.Selection.Count < 2) return;
-        EditSelected("Group", list => DeckOperations.Group(list));
+        EditSlideSelection("Group", (s, list) => AnimationOps.Group(s, list));
         _state.EnteredGroup = null;
         _state.RaiseSelectionChanged();
     }
 
     public void UngroupSelection()
     {
-        EditSelected("Ungroup", list => DeckOperations.Ungroup(list));
+        EditSlideSelection("Ungroup", (s, list) => AnimationOps.Ungroup(s, list));
         _state.EnteredGroup = null;
         _state.RaiseSelectionChanged();
     }
@@ -614,6 +652,33 @@ public partial class EditorView
         }
     });
 
+    /// <summary>Starts crop mode on a picture (or says why it can't).</summary>
+    public void StartCrop(ImageElement? img = null)
+    {
+        img ??= _state.SelectedElements.OfType<ImageElement>().FirstOrDefault();
+        if (img == null)
+        {
+            _window.ShowMessage("Select a picture to crop it.", 3);
+            return;
+        }
+        if (!Canvas.BeginCrop(img, out var reason))
+        {
+            if (reason != null) _window.ShowMessage(reason, 5);
+            return;
+        }
+        Panel.Rebuild();
+    }
+
+    /// <summary>Changes the gradient (or other fill settings) of the selected shapes and text boxes.</summary>
+    public void EditFill(string label, Action<Fill> change, string? mergeKey = null) => EditSelected(label, list =>
+    {
+        foreach (var e in list)
+        {
+            if (e is ShapeElement { IsLine: false, Fill: { } sf }) change(sf);
+            else if (e is TextElement { Fill: { } tf }) change(tf);
+        }
+    }, mergeKey);
+
     public void SetOpacity(double opacity) => EditSelected("Opacity", list => { foreach (var e in list) e.Opacity = Math.Round(opacity, 2); }, "opacity");
 
     public void SetCornerRadius(double radius) => EditSelected("Corners", list =>
@@ -631,6 +696,12 @@ public partial class EditorView
                     break;
                 case ImageElement i:
                     i.CornerRadius = Math.Round(radius);
+                    break;
+                case VideoElement v:
+                    v.CornerRadius = Math.Round(radius);
+                    break;
+                case OnlineVideoElement o:
+                    o.CornerRadius = Math.Round(radius);
                     break;
             }
         }
@@ -651,6 +722,9 @@ public partial class EditorView
                 case ImageElement i:
                     i.Stroke = stroke?.Clone();
                     break;
+                case VideoElement v:
+                    v.Stroke = stroke?.Clone();
+                    break;
             }
         }
     });
@@ -664,6 +738,7 @@ public partial class EditorView
                 ShapeElement s => s.Stroke ??= s.IsLine ? ElementRenderer.LineStroke(s) : null,
                 TextElement t => t.Stroke,
                 ImageElement i => i.Stroke,
+                VideoElement v => v.Stroke,
                 _ => null,
             };
             if (stroke != null) stroke.Width = width;
@@ -679,6 +754,7 @@ public partial class EditorView
                 ShapeElement s => s.Stroke ??= s.IsLine ? ElementRenderer.LineStroke(s) : null,
                 TextElement t => t.Stroke,
                 ImageElement i => i.Stroke,
+                VideoElement v => v.Stroke,
                 _ => null,
             };
             if (stroke != null) stroke.Dash = dash;
@@ -699,33 +775,6 @@ public partial class EditorView
     });
 
     public void SetElbow(bool on) => EditSelected("Connector route", list => { foreach (var s in list.OfType<ShapeElement>()) s.Elbow = on; });
-
-    // ------------------------------------------------------------------ animation (builds)
-
-    public void SetBuild(BuildEffect effect)
-    {
-        var slide = _state.CurrentSlide;
-        if (slide == null) return;
-        var nextStep = slide.Elements.Where(e => e.Build != null && e.Build.Effect != BuildEffect.None).Select(e => e.Build!.Step).DefaultIfEmpty(0).Max() + 1;
-        EditSelected("Animation", list =>
-        {
-            foreach (var e in list)
-            {
-                if (effect == BuildEffect.None)
-                {
-                    e.Build = null;
-                    continue;
-                }
-                if (e.Build == null || e.Build.Effect == BuildEffect.None) e.Build = new Build { Effect = effect, Step = nextStep };
-                else e.Build.Effect = effect;
-            }
-        });
-    }
-
-    public void EditBuild(Action<Build> change) => EditSelected("Animation", list =>
-    {
-        foreach (var e in list.Where(e => e.Build != null)) change(e.Build!);
-    }, "build");
 
     // ------------------------------------------------------------------ format painter
 

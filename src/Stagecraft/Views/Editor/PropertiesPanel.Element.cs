@@ -55,6 +55,10 @@ public sealed partial class PropertiesPanel
         if (hasText) BuildText(selected);
 
         if (single is ImageElement img) BuildImage(img);
+        if (single is VideoElement video) BuildVideo(video);
+        if (single is AudioElement audio) BuildAudio(audio);
+        if (single is OnlineVideoElement online) BuildOnlineVideo(online);
+        if (single is ShapeElement { Shape: ShapeKind.ActionButton } button) BuildActionButton(button);
         if (single is ChartElement chart) BuildChart(chart);
         if (single is TableElement table) BuildTable(table);
         if (selected.All(e => e is IconElement)) BuildIcon(selected.Cast<IconElement>().ToList());
@@ -63,8 +67,10 @@ public sealed partial class PropertiesPanel
         if (fillables.Count > 0) BuildFill(fillables);
         var lines = selected.OfType<ShapeElement>().Where(s => s.IsLine).ToList();
         if (lines.Count > 0) BuildLine(lines);
-        else if (selected.Any(e => e is ShapeElement or TextElement or ImageElement)) BuildBorder(selected.Where(e => e is ShapeElement or TextElement or ImageElement).ToList());
+        else if (selected.Any(e => e is ShapeElement or TextElement or ImageElement or VideoElement)) BuildBorder(selected.Where(e => e is ShapeElement or TextElement or ImageElement or VideoElement).ToList());
+        if (!selected.All(e => e is ShapeElement { IsLine: true } or AudioElement)) BuildEffects(selected);
 
+        BuildLink(selected);
         BuildArrange(selected);
         BuildAnimation(selected);
         BuildName(selected);
@@ -141,6 +147,7 @@ public sealed partial class PropertiesPanel
         var currentSpacing = state.LineSpacing.HasValue ? spacing.OrderBy(s => Math.Abs(s.Item1 - state.LineSpacing.Value)).First().Item1 : -1;
         Row(sec, "Line spacing", Combo(spacing.Select(s => (s.Item1, s.Item2)), currentSpacing, v => editor.SetLineSpacing(v), "Line spacing"));
         Switch(sec, "Shrink text to fit", state.AutoFit ?? true, on => editor.SetAutoFit(on), "Long text gets smaller instead of overflowing");
+        Switch(sec, "Text shadow", editor.SelectionHasTextShadow, on => editor.SetTextShadow(on), "A soft shadow behind the letters, for text over pictures");
     }
 
     // ------------------------------------------------------------------ fill, border, line
@@ -169,6 +176,23 @@ public sealed partial class PropertiesPanel
             gradients.Children.Add(SwatchButton(brush, "Gradient: " + name, selected, () => editor.SetFill(Fill.Linear(a, b, angle))));
         }
         sec.Children.Add(gradients);
+        if (fill is { Kind: FillKind.Linear or FillKind.Radial })
+        {
+            // A gradient of the user's own: type, the two colours (keeping their transparency), the angle.
+            Row(sec, "Gradient", Segments(new[] { (FillKind.Linear, "Linear", (string?)null), (FillKind.Radial, "Radial", null) }, fill.Kind,
+                k => editor.EditFill("Gradient", f => f.Kind = k), "Gradient type"));
+            sec.Children.Add(Hint("From"));
+            sec.Children.Add(Swatches(BaseColor(fill.Color), c => editor.EditFill("Gradient colour", f => f.Color = WithAlphaOf(c ?? "accent1", f.Color)), allowNone: false, "Gradient start colour"));
+            sec.Children.Add(Hint("To"));
+            sec.Children.Add(Swatches(BaseColor(fill.Color2 ?? fill.Color), c => editor.EditFill("Gradient colour", f => f.Color2 = WithAlphaOf(c ?? "accent2", f.Color2)), allowNone: false, "Gradient end colour"));
+            if (fill.Kind == FillKind.Linear)
+                Row(sec, "Angle", Slider(fill.Angle, 0, 360, v => editor.EditFill("Gradient angle", f => f.Angle = Math.Round(v), "gradient-angle"), () => editor.SealHistory()));
+        }
+        else
+        {
+            var from = fill is { Kind: FillKind.Solid } ? fill.Color : "accent1";
+            sec.Children.Add(TextButton("Custom gradient", "Icon.Color", () => editor.SetFill(Fill.Linear(from, BaseColor(from) == "accent2" ? "accent3" : "accent2", 90))));
+        }
         var opacity = elements[0].Opacity;
         Row(sec, "Opacity", Slider(opacity * 100, 5, 100, v => editor.SetOpacity(v / 100), () => editor.SealHistory()));
         if (elements.Any(e => e is TextElement || e is ShapeElement { Shape: ShapeKind.Rectangle or ShapeKind.RoundedRectangle or ShapeKind.Callout }))
@@ -192,6 +216,7 @@ public sealed partial class PropertiesPanel
             ShapeElement s => s.Stroke,
             TextElement t => t.Stroke,
             ImageElement i => i.Stroke,
+            VideoElement v => v.Stroke,
             _ => null,
         };
         sec.Children.Add(Swatches(stroke?.Color, c => editor.SetStroke(c == null ? null : new Stroke { Color = c, Width = stroke?.Width ?? 4, Dash = stroke?.Dash ?? DashStyleKind.Solid }),
@@ -199,8 +224,7 @@ public sealed partial class PropertiesPanel
         if (stroke != null)
         {
             Row(sec, "Width", Number(stroke.Width, 0.5, 60, 1, v => editor.SetStrokeWidth(v), "", 1));
-            Row(sec, "Style", Segments(new[] { (DashStyleKind.Solid, "Solid", (string?)null), (DashStyleKind.Dash, "Dashes", null), (DashStyleKind.Dot, "Dots", null) },
-                stroke.Dash, d => editor.SetStrokeDash(d), "Border style"));
+            Row(sec, "Style", DashCombo(stroke.Dash, d => editor.SetStrokeDash(d), "Border style"));
         }
     }
 
@@ -211,8 +235,7 @@ public sealed partial class PropertiesPanel
         var stroke = ElementRenderer.LineStroke(lines[0]);
         sec.Children.Add(Swatches(stroke.Color, c => editor.SetStroke(new Stroke { Color = c ?? "text", Width = stroke.Width, Dash = stroke.Dash }), allowNone: false, "Line colour"));
         Row(sec, "Width", Number(stroke.Width, 0.5, 60, 1, v => editor.SetStrokeWidth(v), "", 1));
-        Row(sec, "Style", Segments(new[] { (DashStyleKind.Solid, "Solid", (string?)null), (DashStyleKind.Dash, "Dashes", null), (DashStyleKind.Dot, "Dots", null) },
-            stroke.Dash, d => editor.SetStrokeDash(d), "Line style"));
+        Row(sec, "Style", DashCombo(stroke.Dash, d => editor.SetStrokeDash(d), "Line style"));
         var heads = new[] { (ArrowHead.None, "None"), (ArrowHead.Arrow, "Arrow"), (ArrowHead.Dot, "Dot") };
         var first = lines[0];
         var end = first.Shape == ShapeKind.Arrow && first.EndHead == ArrowHead.None ? ArrowHead.Arrow : first.EndHead;
@@ -229,8 +252,27 @@ public sealed partial class PropertiesPanel
     {
         var editor = _editor!;
         var sec = Section("Picture");
-        sec.Children.Add(TextButton(img.Media == null ? "Choose a picture…" : "Replace picture…", "Icon.ImageAdd", () => editor.ReplaceImage(img)));
-        if (img.Media == null) return;
+        if (img.Media == null)
+        {
+            sec.Children.Add(TextButton("Choose a picture…", "Icon.ImageAdd", () => editor.ReplaceImage(img)));
+            return;
+        }
+        var cropping = editor.SlideCanvas.IsCropping;
+        var crop = TextButton(cropping ? "Finish cropping" : "Crop", "Icon.Crop", () =>
+        {
+            if (editor.SlideCanvas.IsCropping) editor.SlideCanvas.EndCrop(commit: true);
+            else editor.StartCrop(img);
+        });
+        if (cropping)
+        {
+            // One wide button while cropping (Enter does the same, Esc cancels).
+            crop.SetResourceReference(BackgroundProperty, "Accent.Selection");
+            crop.ToolTip = "Keep this crop (Enter). Esc puts it back.";
+            sec.Children.Add(crop);
+        }
+        else sec.Children.Add(Grid2(crop, TextButton("Replace…", "Icon.ImageAdd", () => editor.ReplaceImage(img))));
+        if (img.Crop != null && !cropping)
+            sec.Children.Add(TextButton("Reset crop", "Icon.ArrowReset", () => editor.EditSelected("Reset crop", list => { foreach (var i in list.OfType<ImageElement>()) i.Crop = null; })));
         Row(sec, "Fit", Segments(new[] { (ImageFit.Cover, "Fill", (string?)null), (ImageFit.Contain, "Fit", null), (ImageFit.Stretch, "Stretch", null) },
             img.Crop != null ? (ImageFit)(-1) : img.Fit, f => editor.EditSelected("Picture fit", list =>
             {
@@ -240,13 +282,20 @@ public sealed partial class PropertiesPanel
                     i.Crop = null;
                 }
             }), "Picture fit"));
-        Row(sec, "Shape", Segments(new[] { (ImageMask.Rectangle, "Rectangle", (string?)"Icon.Square"), (ImageMask.Circle, "Circle", "Icon.Circle") },
-            img.Mask, m => editor.EditSelected("Picture shape", list =>
+        // Crop to a shape.
+        var shape = img.Mask == ImageMask.Circle ? 2 : img.CornerRadius > 0 ? 1 : 0;
+        Row(sec, "Shape", Segments(new[] { (0, "Rectangle", (string?)"Icon.ShapeRectangle"), (1, "Rounded rectangle", "Icon.ShapeRounded"), (2, "Circle", "Icon.Circle") },
+            shape, m => editor.EditSelected("Picture shape", list =>
             {
-                foreach (var i in list.OfType<ImageElement>()) i.Mask = m;
+                foreach (var i in list.OfType<ImageElement>())
+                {
+                    i.Mask = m == 2 ? ImageMask.Circle : ImageMask.Rectangle;
+                    i.CornerRadius = m == 1 ? (i.CornerRadius > 0 ? i.CornerRadius : Math.Round(Math.Max(16, _state!.Deck.Theme.Radius * 2))) : 0;
+                }
             }), "Picture shape"));
-        if (img.Mask == ImageMask.Rectangle)
+        if (img.Mask == ImageMask.Rectangle && img.CornerRadius > 0)
             Row(sec, "Corners", Slider(img.CornerRadius, 0, 200, v => editor.SetCornerRadius(v), () => editor.SealHistory()));
+        Row(sec, "Opacity", Slider(img.Opacity * 100, 5, 100, v => editor.SetOpacity(v / 100), () => editor.SealHistory()));
         if (img.Fit == ImageFit.Cover && img.Crop == null)
         {
             sec.Children.Add(Grid2(
@@ -383,27 +432,48 @@ public sealed partial class PropertiesPanel
 
     // ------------------------------------------------------------------ animation
 
+    /// <summary>A summary of the selection's animations with the way into the animation pane.</summary>
     private void BuildAnimation(IReadOnlyList<Element> selected)
     {
         var editor = _editor!;
+        var slide = _state!.CurrentSlide!;
         var sec = Section("Animation");
-        var build = selected[0].Build;
-        var effects = new[]
+        var effects = Core.Animation.AnimationRules.EffectsOf(slide, selected);
+        if (effects.Count == 0)
         {
-            (BuildEffect.None, "None (always visible)"), (BuildEffect.Appear, "Appear"), (BuildEffect.Fade, "Fade in"), (BuildEffect.Rise, "Rise"),
-            (BuildEffect.Scale, "Scale up"), (BuildEffect.Wipe, "Wipe"),
-        };
-        Row(sec, "Effect", Combo(effects, build?.Effect ?? BuildEffect.None, e => editor.SetBuild(e), "Build effect"));
-        if (build != null && build.Effect != BuildEffect.None)
-        {
-            sec.Children.Add(Grid2(
-                Labeled("On click", Number(build.Step, 1, 50, 1, v => editor.EditBuild(b => b.Step = (int)v))),
-                Labeled("Delay", Number(build.Delay, 0, 20, 0.1, v => editor.EditBuild(b => b.Delay = v), " s", 1))));
-            sec.Children.Add(Grid2(
-                Labeled("Duration", Number(build.Duration, 0.1, 10, 0.1, v => editor.EditBuild(b => b.Duration = v), " s", 1)),
-                new Border()));
+            var none = new TextBlock { Text = "Not animated: it's there when the slide appears.", FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
+            none.SetResourceReference(TextBlock.ForegroundProperty, "Text.Secondary");
+            sec.Children.Add(none);
         }
-        sec.Children.Add(TextButton("Preview animations", "Icon.Play", () => editor.PreviewBuilds()));
+        else
+        {
+            var timeline = Core.Animation.SlideTimeline.Build(slide);
+            foreach (var a in effects.Take(6))
+            {
+                var group = timeline.AllItems.FirstOrDefault(i => i.Effect.Id == a.Id)?.Group;
+                var when = group == null ? "" : group.Trigger != null ? "when clicked on" : group.Automatic ? "with the slide" : "click " + group.Click;
+                var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+                var icon = new IconView { Width = 14, Height = 14, Data = (Geometry)FindResource(ClassIcon(a.Class, a.Effect)), Foreground = new SolidColorBrush(ClassColor(a.Class)), Margin = new Thickness(0, 0, 8, 0) };
+                row.Children.Add(icon);
+                var w = new TextBlock { Text = when, FontSize = 12 };
+                w.SetResourceReference(TextBlock.ForegroundProperty, "Text.Tertiary");
+                DockPanel.SetDock(w, Dock.Right);
+                row.Children.Add(w);
+                row.Children.Add(new TextBlock { Text = a.DisplayName, FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis });
+                sec.Children.Add(row);
+            }
+            if (effects.Count > 6)
+            {
+                var more = new TextBlock { Text = $"and {effects.Count - 6} more", FontSize = 12, Margin = new Thickness(22, 0, 0, 6) };
+                more.SetResourceReference(TextBlock.ForegroundProperty, "Text.Tertiary");
+                sec.Children.Add(more);
+            }
+        }
+        var add = TextButton("Add animation…", "Icon.StarEmphasis", () => { });
+        add.Click += (_, _) => AnimationGallery.Show(add, editor, AnimationGallery.Purpose.Add);
+        sec.Children.Add(Grid2(add, TextButton("Animation pane", "Icon.TextBulletListSquare", () => editor.ShowAnimations(true))));
+        if (effects.Count > 0)
+            sec.Children.Add(Grid2(TextButton("Preview", "Icon.Play", () => editor.PreviewAnimations()), TextButton("Remove", "Icon.Delete", () => editor.RemoveAnimationsOfSelection())));
     }
 
     private void BuildName(IReadOnlyList<Element> selected)

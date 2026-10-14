@@ -59,6 +59,34 @@ internal static class Compat
 #endif
     }
 
+    /// <summary>
+    /// <paramref name="path"/> relative to <paramref name="folder"/> ("..\Videos\clip.mp4"), or the full path when
+    /// there's no relative way (another drive).
+    /// </summary>
+    public static string RelativePath(string folder, string path)
+    {
+        try
+        {
+            if (!string.Equals(Path.GetPathRoot(Path.GetFullPath(folder)), Path.GetPathRoot(Path.GetFullPath(path)), StringComparison.OrdinalIgnoreCase)) return path;
+#if NETFRAMEWORK
+            var from = new Uri(folder.EndsWith("\\") || folder.EndsWith("/") ? folder : folder + "\\");
+            var to = new Uri(path);
+            if (!string.Equals(from.Scheme, to.Scheme, StringComparison.OrdinalIgnoreCase) || !string.Equals(from.Host, to.Host, StringComparison.OrdinalIgnoreCase)) return path;
+            var relative = from.MakeRelativeUri(to);
+            if (relative.IsAbsoluteUri) return path;
+            var text = Uri.UnescapeDataString(relative.ToString()).Replace('/', '\\');
+            return text.Length == 0 || Path.IsPathRooted(text) ? path : text;
+#else
+            var text = Path.GetRelativePath(folder, path);
+            return Path.IsPathRooted(text) ? path : text;
+#endif
+        }
+        catch (Exception ex) when (ex is UriFormatException or ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
+        {
+            return path;
+        }
+    }
+
     /// <summary>True if <paramref name="text"/> contains <paramref name="value"/>, ignoring case.</summary>
     public static bool ContainsIgnoreCase(string text, string value) =>
         text.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0;

@@ -329,4 +329,15 @@ public partial class EditorView
         menu.PlacementTarget = Rail;
         menu.IsOpen = true;
     }
+
+    /// <summary>Slide numbers, date and footer text for every slide.</summary>
+    public void EditHeaderFooter()
+    {
+        var slide = _state.CurrentSlide ?? Session.Deck.Slides.FirstOrDefault();
+        if (slide == null) return;
+        if (Canvas.IsEditingText) Canvas.CommitTextEdit();
+        var result = HeaderFooterDialog.Ask(_window, Session.Deck, Session.Media, slide);
+        if (result == null) return;
+        Session.EditStructure("Header and footer", d => d.Footer = result);
+    }
 }

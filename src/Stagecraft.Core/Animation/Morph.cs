@@ -207,15 +207,19 @@ public sealed class MorphFrame
     private readonly List<MorphTrack> _tracks;
     private readonly Dictionary<Element, double> _fitScale = new();
 
-    public MorphFrame(Slide from, Slide to, RenderContext ctxFrom, RenderContext ctxTo)
+    /// <summary>
+    /// <paramref name="showFrom"/> / <paramref name="showTo"/> say which elements are on screen at the end of the first
+    /// slide's animations and at the start of the second's (elements waiting for an entrance don't morph in early).
+    /// </summary>
+    public MorphFrame(Slide from, Slide to, RenderContext ctxFrom, RenderContext ctxTo, Func<Element, bool>? showFrom = null, Func<Element, bool>? showTo = null)
     {
-        _from = from;
-        _to = to;
+        _from = Visible(from, showFrom);
+        _to = Visible(to, showTo);
         _ctxFrom = ctxFrom;
         _ctxTo = ctxTo;
         _styleFrom = ctxFrom.StyleFor(from);
         _styleTo = ctxTo.StyleFor(to);
-        _tracks = MorphPlanner.Plan(from, to);
+        _tracks = MorphPlanner.Plan(_from, _to);
         // Auto-fit scales of both ends, measured once (re-measuring every frame would be slow).
         foreach (var track in _tracks)
         {
@@ -225,6 +229,20 @@ public sealed class MorphFrame
     }
 
     public IReadOnlyList<MorphTrack> Tracks => _tracks;
+
+    private static Slide Visible(Slide slide, Func<Element, bool>? show)
+    {
+        if (show == null) return slide;
+        return new Slide
+        {
+            Id = slide.Id,
+            Layout = slide.Layout,
+            Background = slide.Background,
+            ShowDecorations = slide.ShowDecorations,
+            Hidden = slide.Hidden,
+            Elements = slide.Elements.Where(show).ToList(),
+        };
+    }
 
     private void Fit(Element e, SlideStyle style)
     {

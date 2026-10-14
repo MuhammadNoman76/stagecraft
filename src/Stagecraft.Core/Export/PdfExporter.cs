@@ -93,7 +93,79 @@ public static class PdfExporter
             page.Width = XUnit.FromPoint(deck.Width * PointsPerUnit);
             page.Height = XUnit.FromPoint(deck.Height * PointsPerUnit);
         }
+        else
+        {
+            for (var i = 0; i < slides.Count; i++)
+            {
+                try
+                {
+                    AddLinks(document.Pages[i], slides, i, ctx, deck, media);
+                }
+                catch (Exception)
+                {
+                    // A link that can't be written leaves the page as it is.
+                }
+            }
+        }
         document.Save(output, false);
+    }
+
+    /// <summary>
+    /// Link annotations over a page: web pages and e-mail open, slide links go to that page (next, previous, first,
+    /// last or a particular slide; "last viewed" has no PDF equivalent), file links and linked videos and sounds point
+    /// at their file. Online video cards link to their page.
+    /// </summary>
+    private static void AddLinks(PdfPage page, List<Slide> slides, int index, RenderContext ctx, Deck deck, MediaStore media)
+    {
+        var slide = slides[index];
+        var pageHeight = deck.Height * PointsPerUnit;
+        PdfRectangle ToPdf(Rect r)
+        {
+            // PDF page coordinates: points, from the bottom left.
+            var x1 = r.Left * PointsPerUnit;
+            var x2 = r.Right * PointsPerUnit;
+            var y1 = pageHeight - r.Bottom * PointsPerUnit;
+            var y2 = pageHeight - r.Top * PointsPerUnit;
+            return new PdfRectangle(new XPoint(x1, y1), new XPoint(x2, y2));
+        }
+        var slideArea = new Rect(0, 0, deck.Width, deck.Height);
+        foreach (var region in LinkRegions.For(slide, ctx))
+        {
+            var bounds = Rect.Intersect(region.Bounds, slideArea);
+            if (bounds.IsEmpty || bounds.Width < 1 || bounds.Height < 1) continue;
+            var link = region.Link;
+            switch (link.Kind)
+            {
+                case LinkKind.Web:
+                case LinkKind.Email:
+                    if (LinkSafety.SafeUri(link) is { } uri) page.AddWebLink(ToPdf(bounds), uri);
+                    break;
+                case LinkKind.File:
+                    var file = LinkSafety.ResolveFile(link.Address, media.BaseFolder) ?? link.Address;
+                    if (!string.IsNullOrWhiteSpace(file)) page.AddFileLink(ToPdf(bounds), file);
+                    break;
+                case LinkKind.Slide:
+                    var target = link.Jump switch
+                    {
+                        SlideJump.Next => index + 1,
+                        SlideJump.Previous => index - 1,
+                        SlideJump.First => 0,
+                        SlideJump.Last => slides.Count - 1,
+                        SlideJump.Specific => slides.FindIndex(s => s.Id == link.SlideId),
+                        _ => -1,
+                    };
+                    if (target >= 0 && target < slides.Count && target != index) page.AddDocumentLink(ToPdf(bounds), target + 1);
+                    break;
+            }
+        }
+        // Linked videos and sounds: the poster (or icon) links to the file.
+        foreach (var clip in slide.Elements.OfType<MediaClipElement>())
+        {
+            if (clip.Media != null || !clip.IsLinked || ElementRenderer.IsHiddenInShow(clip)) continue;
+            var path = media.ResolveLink(clip) ?? clip.LinkAbsolute ?? clip.LinkPath;
+            var bounds = Rect.Intersect(clip.RotatedBounds, slideArea);
+            if (path != null && !bounds.IsEmpty && bounds.Width >= 1 && bounds.Height >= 1) page.AddFileLink(ToPdf(bounds), path);
+        }
     }
 
     /// <summary>

@@ -29,6 +29,9 @@ public sealed class Slide
 
     public Transition Transition { get; set; } = new();
 
+    /// <summary>The slide's animations in their order (see <see cref="AnimationEffect"/>).</summary>
+    public List<AnimationEffect> Animations { get; set; } = new();
+
     /// <summary>Seconds spent on this slide in the last rehearsal.</summary>
     public double? RehearsedSeconds { get; set; }
 

@@ -68,6 +68,18 @@ public sealed class DeckSession
         DirtyChanged?.Invoke();
     }
 
+    /// <summary>
+    /// Marks a snapshot as saved: the deck as it was when <paramref name="savedTop"/> was the newest undo step (changes
+    /// made while an automatic save was writing keep the deck unsaved).
+    /// </summary>
+    public void MarkSaved(string path, IUndoAction? savedTop)
+    {
+        FilePath = path;
+        _forcedDirty = false;
+        History.MarkSavedAt(savedTop);
+        DirtyChanged?.Invoke();
+    }
+
     /// <summary>Marks the deck as unsaved without an undo step (recovered or imported decks).</summary>
     public void MarkDirty()
     {
@@ -117,6 +129,7 @@ public sealed class DeckSession
         target.Hidden = source.Hidden;
         target.Section = source.Section;
         target.Transition = source.Transition;
+        target.Animations = source.Animations;
         target.RehearsedSeconds = source.RehearsedSeconds;
     }
 
@@ -167,12 +180,13 @@ public sealed class DeckSession
     /// Adds, removes, reorders or changes slide-level flags (hidden, section) without touching slide content.
     /// Slides are kept by reference, so this is cheap even for long decks.
     /// </summary>
-    public void EditStructure(string label, Action<Deck> change)
+    public void EditStructure(string label, Action<Deck> change, bool redrawSlides = true)
     {
         var before = StructureState.Take(Deck);
         change(Deck);
         var after = StructureState.Take(Deck);
-        foreach (var s in Deck.Slides) s.Revision++;
+        // Guides don't change how slides look: their thumbnails stay.
+        if (redrawSlides) foreach (var s in Deck.Slides) s.Revision++;
         History.Push(new StructureEdit(this, before, after, label));
         Changed?.Invoke(new SessionChange(ChangeKind.Structure));
     }
@@ -182,12 +196,16 @@ public sealed class DeckSession
         public List<Slide> Slides = new();
         public List<(bool Hidden, string? Section)> Flags = new();
         public string Title = "";
+        public HeaderFooter Footer = new();
+        public List<GuideLine> Guides = new();
 
         public static StructureState Take(Deck deck) => new()
         {
             Slides = deck.Slides.ToList(),
             Flags = deck.Slides.Select(s => (s.Hidden, s.Section)).ToList(),
             Title = deck.Title,
+            Footer = deck.Footer.Clone(),
+            Guides = deck.Guides.Select(g => g.Clone()).ToList(),
         };
 
         public void Restore(Deck deck)
@@ -200,6 +218,8 @@ public sealed class DeckSession
                 Slides[i].Revision++;
             }
             deck.Title = Title;
+            deck.Footer = Footer.Clone();
+            deck.Guides = Guides.Select(g => g.Clone()).ToList();
         }
     }
 
@@ -271,6 +291,8 @@ public sealed class DeckSession
             deck.Width = copy.Width;
             deck.Height = copy.Height;
             deck.Theme = copy.Theme;
+            deck.Footer = copy.Footer;
+            deck.Guides = copy.Guides;
             // Keep slide objects (the UI holds them) and copy content into them; add or drop the rest.
             var result = new List<Slide>();
             foreach (var s in copy.Slides)

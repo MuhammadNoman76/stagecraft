@@ -12,6 +12,9 @@ public static class Easing
     /// <summary>Slow start (cubic-bezier(0.4, 0, 1, 1)), for things leaving.</summary>
     public static double Accelerate(double t) => CubicBezier(0.4, 0.0, 1.0, 1.0, t);
 
+    /// <summary>Symmetric ease in and out (CSS ease-in-out, cubic-bezier(0.42, 0, 0.58, 1)): emphasis and motion paths.</summary>
+    public static double InOut(double t) => CubicBezier(0.42, 0.0, 0.58, 1.0, t);
+
     /// <summary>Morph: a little more emphasis in the middle (cubic-bezier(0.65, 0, 0.35, 1)).</summary>
     public static double Morph(double t) => CubicBezier(0.65, 0.0, 0.35, 1.0, t);
 

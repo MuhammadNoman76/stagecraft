@@ -257,20 +257,4 @@ public class MorphTests
         Assert.InRange(Easing.Morph(0.5), 0.49, 0.51); // symmetric
         Assert.True(Easing.Decelerate(0.2) > 0.2); // fast start
     }
-
-    [Fact]
-    public void Builds_StepsAndStates()
-    {
-        var slide = Slide(
-            new ShapeElement { Build = new Build { Effect = BuildEffect.Fade, Step = 2 } },
-            new ShapeElement { Build = new Build { Effect = BuildEffect.Rise, Step = 1 } },
-            new ShapeElement { Build = new Build { Effect = BuildEffect.Rise, Step = 1, Delay = 0.3 } },
-            new ShapeElement());
-        Assert.Equal(2, Builds.StepCount(slide));
-        Assert.Equal(1, Builds.ClickOf(slide, slide.Elements[1]));
-        Assert.Equal(2, Builds.ClickOf(slide, slide.Elements[0]));
-        Assert.Equal(0, Builds.State(BuildEffect.Fade, 0).Opacity, 6);
-        Assert.Equal(1, Builds.State(BuildEffect.Fade, 1).Opacity, 6);
-        Assert.True(Builds.StepDuration(slide, 1) >= 0.3);
-    }
 }

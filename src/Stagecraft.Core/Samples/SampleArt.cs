@@ -93,12 +93,13 @@ public static class SampleArt
     }, jpeg: true);
 
     /// <summary>Layered hills at sunrise.</summary>
-    public static byte[] Dawn(int w = 1600, int h = 1200) => Render(w, h, dc =>
+    /// <remarks>Without the sun (<paramref name="sun"/> false) for a slide that animates its own.</remarks>
+    public static byte[] Dawn(int w = 1600, int h = 1200, bool sun = true) => Render(w, h, dc =>
     {
         dc.DrawRectangle(Vertical(("#FCD9B8", 0), ("#F8A98B", 0.45), ("#E0787F", 0.8), ("#B65E86", 1)), null, new Rect(0, 0, w, h));
-        var sun = new RadialGradientBrush(C("#FFF6D8"), Color.FromArgb(0, 255, 236, 190));
-        dc.DrawEllipse(sun, null, new Point(w * 0.62, h * 0.48), h * 0.34, h * 0.34);
-        dc.DrawEllipse(new SolidColorBrush(C("#FFF3D4")), null, new Point(w * 0.62, h * 0.48), h * 0.09, h * 0.09);
+        var glow = new RadialGradientBrush(C("#FFF6D8"), Color.FromArgb(0, 255, 236, 190));
+        dc.DrawEllipse(glow, null, new Point(w * 0.62, h * 0.48), h * 0.34, h * 0.34);
+        if (sun) dc.DrawEllipse(new SolidColorBrush(C("#FFF3D4")), null, new Point(w * 0.62, h * 0.48), h * 0.09, h * 0.09);
         var layers = new[] { ("#C97C93", 0.58, 0.18), ("#9E5F86", 0.68, 0.16), ("#6E4A78", 0.78, 0.13), ("#3E2E57", 0.9, 0.1) };
         var seed = 3;
         foreach (var (color, y, amp) in layers) dc.DrawGeometry(new SolidColorBrush(C(color)), null, Ridge(w, h, h * y, h * amp, seed++, 6));

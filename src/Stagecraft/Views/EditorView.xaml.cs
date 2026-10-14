@@ -19,6 +19,7 @@ public partial class EditorView
     private readonly EditorState _state;
     private readonly ThumbnailCache _thumbs;
     private readonly DispatcherTimer _autosave;
+    private readonly DispatcherTimer _autoSaveFile;
     private readonly DispatcherTimer _notesTimer;
     private string _recoveryKey = Ids.New();
     private bool _closeConfirmed;
@@ -59,6 +60,14 @@ public partial class EditorView
         Canvas.ContextRequested += ShowCanvasMenu;
         Canvas.TextEditingChanged += () => Panel.Rebuild();
         Canvas.TextSelectionChanged += () => Panel.Rebuild();
+        Canvas.PathDrawn += (id, path) => SetMotionPath(id, path, Core.Model.EffectKind.Custom);
+        Canvas.LinkFollowed += FollowLink;
+        Canvas.MediaDropped += (paths, at) => InsertDroppedMedia(paths, at);
+        Canvas.CropEnded += () => Panel.Rebuild();
+        Canvas.TextMenuOpening += AddTextLinkItems;
+        TextContextMenu.ApplySpelling(NotesBox);
+        TextContextMenu.Attach(NotesBox);
+        AppSettings.Changed += OnSettingsChanged;
 
         TitleBox.Text = session.Deck.Title;
         TitleBox.LostKeyboardFocus += (_, _) => CommitTitle();
@@ -93,9 +102,11 @@ public partial class EditorView
         _autosave = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         _autosave.Tick += (_, _) => AutosaveTick();
         _autosave.Start();
+        _autoSaveFile = new DispatcherTimer { Interval = AutoSaveDelay };
+        _autoSaveFile.Tick += (_, _) => AutoSaveFileTick();
 
         PreviewKeyDown += OnPreviewKeyDown;
-        CommandBar.SizeChanged += (_, _) => UpdateCommandBarLayout();
+        SizeChanged += (_, _) => UpdateCommandBarLayout();
         Loaded += (_, _) =>
         {
             Canvas.Focus();
@@ -122,8 +133,10 @@ public partial class EditorView
         if (_detached) return;
         _detached = true;
         _autosave.Stop();
+        _autoSaveFile.Stop();
         _notesTimer.Stop();
         Session.Changed -= OnSessionChanged;
+        AppSettings.Changed -= OnSettingsChanged;
         Session.DirtyChanged -= OnDirtyChanged;
     }
 
@@ -132,6 +145,11 @@ public partial class EditorView
     private void OnSessionChanged(SessionChange change)
     {
         _changeCounter++;
+        if (Session.FilePath != null && AppSettings.Current.AutoSaveFile)
+        {
+            _autoSaveFile.Stop();
+            _autoSaveFile.Start();
+        }
         switch (change.Kind)
         {
             case ChangeKind.Slide:
@@ -177,6 +195,7 @@ public partial class EditorView
 
     private void OnSelectionChanged()
     {
+        SyncEffectSelection();
         Canvas.InvalidateOverlay();
     }
 
@@ -193,6 +212,19 @@ public partial class EditorView
         RedoButton.IsEnabled = Session.History.CanRedo;
         UndoButton.ToolTip = Session.History.CanUndo ? $"Undo {Session.History.UndoLabel} (Ctrl+Z)" : "Undo (Ctrl+Z)";
         RedoButton.ToolTip = Session.History.CanRedo ? $"Redo {Session.History.RedoLabel} (Ctrl+Y)" : "Redo (Ctrl+Y)";
+    }
+
+    /// <summary>Settings changed (here or in the Settings window): spelling, rulers and grid follow.</summary>
+    private void OnSettingsChanged()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(OnSettingsChanged));
+            return;
+        }
+        TextContextMenu.ApplySpelling(NotesBox);
+        if (Canvas.TextEditor is { } rtb) TextContextMenu.ApplySpelling(rtb);
+        Canvas.ApplyViewAids();
     }
 
     private void UpdateSaveState()
@@ -221,8 +253,9 @@ public partial class EditorView
     /// <summary>Narrow windows: the insert buttons lose their labels, then the palette pill shrinks.</summary>
     private void UpdateCommandBarLayout()
     {
-        var w = CommandBar.ActualWidth;
-        var level = w >= 1540 ? 0 : w >= 1120 ? 1 : 2;
+        // The width the bar can have (not its own: with every label it can be wider than the window).
+        var w = ActualWidth - CommandBar.Margin.Left - CommandBar.Margin.Right;
+        var level = w >= 1980 ? 0 : w >= 1640 ? 1 : 2;
         if (level == _barLevel) return;
         _barLevel = level;
         foreach (var b in InsertBar.Children.OfType<Button>())
@@ -243,8 +276,9 @@ public partial class EditorView
                 b.Width = double.NaN;
             }
         }
-        PaletteButton.Width = level >= 2 ? 170 : 220;
+        PaletteButton.Width = 220;
         DesignToggle.Content = level >= 2 ? null : "Design";
+        AnimationsToggle.Content = level >= 2 ? null : "Animations";
         NewSlideButton.Content = level >= 2 ? null : "New slide";
     }
 
@@ -311,16 +345,13 @@ public partial class EditorView
 
     // ------------------------------------------------------------------ design / views
 
-    private void OnDesign(object sender, RoutedEventArgs e)
-    {
-        Panel.DesignMode = DesignToggle.IsChecked == true;
-        Panel.RebuildNow();
-    }
+    private void OnDesign(object sender, RoutedEventArgs e) => ShowDesign(DesignToggle.IsChecked == true);
 
     public void ShowDesign(bool on)
     {
         DesignToggle.IsChecked = on;
-        Panel.DesignMode = on;
+        if (on && AnimationsToggle.IsChecked == true) ShowAnimations(false);
+        Panel.Mode = on ? PanelMode.Design : AnimationsToggle.IsChecked == true ? PanelMode.Animations : PanelMode.Properties;
         Panel.RebuildNow();
     }
 
@@ -328,6 +359,7 @@ public partial class EditorView
 
     private void AutosaveTick()
     {
+        if (MainWindow.IsTestOffscreen || Services.CaptureRunner.Running) return; // test runs leave the recovery folder alone
         var minutes = AppSettings.Current.AutosaveMinutes;
         if (minutes <= 0 || !Session.IsDirty) return;
         if (DateTime.UtcNow - _lastRecoverySave < TimeSpan.FromMinutes(minutes)) return;
@@ -342,6 +374,7 @@ public partial class EditorView
     public bool ConfirmClose()
     {
         if (_closeConfirmed) return true;
+        WaitForAutoSave();
         if (Canvas.IsEditingText) Canvas.CommitTextEdit();
         CommitNotes();
         CommitTitle();
@@ -369,6 +402,13 @@ public partial class EditorView
         var mods = Keyboard.Modifiers;
         var typing = Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase;
         var inCanvasText = Canvas.IsEditingText && Keyboard.FocusedElement == Canvas.TextEditor;
+
+        if (key == Key.Escape && (_painterArmed || _animationPainterArmed))
+        {
+            CancelPainters();
+            e.Handled = true;
+            return;
+        }
 
         foreach (var command in Commands)
         {

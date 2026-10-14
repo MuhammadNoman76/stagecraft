@@ -112,8 +112,96 @@ public partial class EditorView
         return SaveTo(dialog.FileName);
     }
 
+    // ------------------------------------------------------------------ automatic save
+
+    /// <summary>How long editing must pause before the file saves itself.</summary>
+    private static readonly TimeSpan AutoSaveDelay = TimeSpan.FromSeconds(4);
+
+    private Task? _autoSaveTask;
+    private int _saveGeneration;
+    private string? _autoSaveFailedFor;
+
+    /// <summary>
+    /// Saves a deck that already has a file, a few seconds after editing pauses (Settings › Save automatically). The
+    /// snapshot is taken here; the file is written on a background thread, atomically, like a normal save.
+    /// New decks are never saved automatically: they have no file until the user picks one.
+    /// </summary>
+    private async void AutoSaveFileTick()
+    {
+        _autoSaveFile.Stop();
+        var path = Session.FilePath;
+        if (path == null || !AppSettings.Current.AutoSaveFile || !Session.IsDirty || _detached || _autoSaveTask != null) return;
+        // Not in the middle of something: typing on the slide, a drag, cropping, a dialog. Try again later.
+        if (Canvas.IsEditingText || Canvas.IsCropping || Mouse.LeftButton == MouseButtonState.Pressed || !_window.IsEnabled ||
+            System.Windows.Interop.ComponentDispatcher.IsThreadModal)
+        {
+            _autoSaveFile.Start();
+            return;
+        }
+        Session.History.Seal(); // later edits start a new step, so the snapshot matches an undo state exactly
+        var savedTop = Session.History.Top;
+        Deck deck;
+        MediaStore media;
+        DeckPreviews previews;
+        try
+        {
+            deck = Core.IO.DeckJson.Clone(Session.Deck);
+            media = Session.Media.Clone();
+            previews = BuildPreviews();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Automatic save snapshot");
+            return;
+        }
+        var generation = _saveGeneration;
+        var task = Task.Run(() => DeckFile.Save(path, deck, media, previews));
+        _autoSaveTask = task;
+        try
+        {
+            await task;
+            if (Session.FilePath == path && generation == _saveGeneration)
+            {
+                Session.MarkSaved(path, savedTop);
+                Recovery.Discard(_recoveryKey);
+                _autoSaveFailedFor = null;
+                _window.UpdateTitle();
+                UpdateSaveState();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Automatic save " + path);
+            // Say it once per file; Save (Ctrl+S) shows the full error.
+            if (_autoSaveFailedFor != path) _window.ShowMessage("Couldn't save automatically: " + ex.Message, 6, warning: true);
+            _autoSaveFailedFor = path;
+        }
+        finally
+        {
+            _autoSaveTask = null;
+        }
+    }
+
+    /// <summary>Lets an automatic save that is writing finish first (before a manual save or closing).</summary>
+    private void WaitForAutoSave()
+    {
+        _autoSaveFile.Stop();
+        var task = _autoSaveTask;
+        if (task == null) return;
+        try
+        {
+            task.Wait(TimeSpan.FromMinutes(2));
+        }
+        catch (AggregateException)
+        {
+            // reported by the automatic save itself
+        }
+    }
+
     private bool SaveTo(string path)
     {
+        WaitForAutoSave();
+        _saveGeneration++;
         if (Canvas.IsEditingText) Canvas.CommitTextEdit();
         CommitNotes();
         CommitTitle();

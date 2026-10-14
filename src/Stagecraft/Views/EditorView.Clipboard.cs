@@ -19,6 +19,12 @@ public sealed class ClipboardPayload
     public List<Element> Elements { get; set; } = new();
     public List<Slide> Slides { get; set; } = new();
     public Dictionary<string, string> Media { get; set; } = new();
+
+    /// <summary>Videos and sounds: name → file on disk (large media don't go through the clipboard itself).</summary>
+    public Dictionary<string, string> MediaFiles { get; set; } = new();
+
+    /// <summary>The animations of the copied elements.</summary>
+    public List<AnimationEffect> Animations { get; set; } = new();
     public double SourceWidth { get; set; } = 1920;
     public double SourceHeight { get; set; } = 1080;
     public string? SourceSlideId { get; set; }
@@ -103,7 +109,8 @@ public partial class EditorView
         if (slide == null || selected.Count == 0) return;
         var payload = new ClipboardPayload
         {
-            Elements = selected.Select(e => DeckJson.Clone(e)).ToList(),
+            Elements = selected.Select(e => PortableCopy(e)).ToList(),
+            Animations = Core.Animation.AnimationRules.EffectsOf(slide, selected).Select(a => a.Clone()).ToList(),
             SourceWidth = Session.Deck.Width,
             SourceHeight = Session.Deck.Height,
             SourceSlideId = slide.Id,
@@ -125,7 +132,12 @@ public partial class EditorView
         if (slides.Count == 0) return;
         var payload = new ClipboardPayload
         {
-            Slides = slides.Select(s => DeckJson.Clone(s)).ToList(),
+            Slides = slides.Select(s =>
+            {
+                var copy = DeckJson.Clone(s);
+                copy.Elements = s.Elements.Select(e => PortableCopy(e)).ToList();
+                return copy;
+            }).ToList(),
             SourceWidth = Session.Deck.Width,
             SourceHeight = Session.Deck.Height,
         };
@@ -141,15 +153,62 @@ public partial class EditorView
     {
         foreach (var e in elements)
         {
-            var media = e switch
+            foreach (var media in DeckFile.MediaOf(e))
             {
-                ImageElement { Media: { } m } => m,
-                ShapeElement { Fill.Media: { } f } => f,
-                TextElement { Fill.Media: { } tf } => tf,
-                _ => null,
-            };
-            if (media != null && !payload.Media.ContainsKey(media) && Session.Media.GetBytes(media) is { } bytes)
-                payload.Media[media] = Convert.ToBase64String(bytes);
+                if (payload.Media.ContainsKey(media) || payload.MediaFiles.ContainsKey(media)) continue;
+                var item = Session.Media.Get(media);
+                if (item == null) continue;
+                // Videos and sounds can be huge: the clipboard carries the path of the cached file instead.
+                if (item.FilePath != null) payload.MediaFiles[media] = item.FilePath;
+                else payload.Media[media] = Convert.ToBase64String(item.Data);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A copy for the clipboard: links to files and linked videos keep working in another presentation (their paths
+    /// become full paths; saving makes them relative to the new presentation again).
+    /// </summary>
+    private Element PortableCopy(Element e)
+    {
+        var copy = DeckJson.Clone(e);
+        var folder = DeckFolder;
+        if (copy is MediaClipElement { IsLinked: true } clip && e is MediaClipElement original && Session.Media.ResolveLink(original) is { } full)
+            clip.LinkPath = full;
+        void Fix(Hyperlink? link)
+        {
+            if (link is { Kind: LinkKind.File } && LinkSafety.ResolveFile(link.Address, folder) is { } path) link.Address = path;
+        }
+        Fix(copy.Link);
+        foreach (var body in DeckFile.TextBodies(copy))
+        foreach (var p in body.Content.Paragraphs)
+        foreach (var r in p.Runs)
+            Fix(r.Link);
+        return copy;
+    }
+
+    /// <summary>Takes the videos and sounds named on the clipboard into this presentation's media.</summary>
+    private void AdoptMediaFiles(ClipboardPayload payload)
+    {
+        foreach (var (name, path) in payload.MediaFiles)
+        {
+            if (Session.Media.Get(name) != null || !DeckFile.IsSafeMediaName(name)) continue;
+            try
+            {
+                if (!File.Exists(path)) continue; // the other window closed: the element shows "not found"
+                var target = MediaCache.PathFor(name);
+                if (!string.Equals(Path.GetFullPath(path), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase) && !File.Exists(target))
+                    MediaCache.WriteAtomically(target, output =>
+                    {
+                        using var input = File.OpenRead(path);
+                        input.CopyTo(output, 1 << 16);
+                    });
+                Session.Media.AddExistingFile(name, target);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                Log.Error(ex, "Paste media");
+            }
         }
     }
 
@@ -210,6 +269,7 @@ public partial class EditorView
                     // damaged entry: the element shows "missing picture"
                 }
             }
+            AdoptMediaFiles(payload);
             if (payload.Slides.Count > 0) PasteSlides(payload);
             else if (payload.Elements.Count > 0) PasteElements(payload);
             return;
@@ -234,11 +294,8 @@ public partial class EditorView
             var copy = DeckJson.Clone(s);
             copy.Id = Ids.New();
             copy.Section = null;
-            foreach (var e in copy.Elements)
-            {
-                e.MorphKey = null;
-                e.Id = Ids.New();
-            }
+            DeckOperations.RenewIds(copy, keepMorphIdentity: false);
+            Core.Animation.AnimationRules.Prune(copy);
             ScaleElements(copy.Elements, payload.SourceWidth, payload.SourceHeight);
             return copy;
         }).ToList();
@@ -272,15 +329,20 @@ public partial class EditorView
         // Pasting where the originals still sit: offset so the copy is visible.
         var collides = elements.All(e => slide.Elements.Any(x => Math.Abs(x.X - e.X) < 1 && Math.Abs(x.Y - e.Y) < 1 && x.GetType() == e.GetType()));
         var offset = collides ? 24 : 0;
-        var copies = DeckOperations.CopyElements(elements, offset, offset);
+        var copies = DeckOperations.CopyElements(elements, offset, offset, out var idMap);
+        var effects = Core.Animation.AnimationRules.CopyFor(payload.Animations ?? new List<AnimationEffect>(), idMap);
         // Keep connectors attached to copied elements.
-        var idMap = elements.Select((e, i) => (e.Id, copies[i].Id)).ToDictionary(x => x.Item1, x => x.Item2);
         foreach (var c in copies.OfType<ShapeElement>())
         {
             c.StartId = c.StartId != null && idMap.TryGetValue(c.StartId, out var s) ? s : null;
             c.EndId = c.EndId != null && idMap.TryGetValue(c.EndId, out var t) ? t : null;
         }
-        Session.EditSlide(slide, "Paste", s => s.Elements.AddRange(copies));
+        Session.EditSlide(slide, "Paste", s =>
+        {
+            s.Elements.AddRange(copies);
+            s.Animations.AddRange(effects);
+            Core.Animation.AnimationRules.Prune(s);
+        });
         _state.Select(copies.Select(c => c.Id));
         Canvas.Focus();
     }

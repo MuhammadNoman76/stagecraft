@@ -57,12 +57,16 @@
                         AutomationProperties.Name="Insert shape" Click="OnInsertShapeMenu" />
                 <Button Style="{StaticResource CommandButton}" c:Ui.Icon="{StaticResource Icon.ImageAdd}" Content="Image" ToolTip="Picture from a file (or paste / drop one)"
                         AutomationProperties.Name="Insert image" Click="OnInsertImage" />
+                <Button x:Name="MediaButton" Style="{StaticResource CommandButton}" c:Ui.Icon="{StaticResource Icon.VideoClip}" Content="Media" ToolTip="Video, sound or an online video"
+                        AutomationProperties.Name="Insert video or sound" Click="OnInsertMediaMenu" />
                 <Button Style="{StaticResource CommandButton}" c:Ui.Icon="{StaticResource Icon.Icons}" Content="Icon" ToolTip="Icon (searchable)"
                         AutomationProperties.Name="Insert icon" Click="OnInsertIcon" />
                 <Button Style="{StaticResource CommandButton}" c:Ui.Icon="{StaticResource Icon.DataBarVertical}" Content="Chart" ToolTip="Chart"
                         AutomationProperties.Name="Insert chart" Click="OnInsertChart" />
                 <Button Style="{StaticResource CommandButton}" c:Ui.Icon="{StaticResource Icon.Table}" Content="Table" ToolTip="Table"
                         AutomationProperties.Name="Insert table" Click="OnInsertTable" />
+                <Button Style="{StaticResource CommandButton}" c:Ui.Icon="{StaticResource Icon.Link}" Content="Link" ToolTip="Link to a web page, e-mail, slide or file (Ctrl+Shift+K)"
+                        AutomationProperties.Name="Insert link" Click="OnInsertLink" />
             </StackPanel>
 
             <!-- right side -->
@@ -79,6 +83,8 @@
                 </Border>
                 <Button x:Name="PaletteButton" Style="{StaticResource PaletteButton}" Width="236" Margin="0,0,8,0" Content="Search commands"
                         AutomationProperties.Name="Command palette" ToolTip="Find any command, layout, theme or slide (Ctrl+K)" Click="OnPalette" />
+                <ToggleButton x:Name="AnimationsToggle" Style="{StaticResource SubtleToggle}" c:Ui.Icon="{StaticResource Icon.StarEmphasis}" Content="Animations"
+                              ToolTip="Animations on this slide: add, order and time them" AutomationProperties.Name="Animations" Margin="0,0,4,0" Click="OnAnimationsToggle" />
                 <ToggleButton x:Name="DesignToggle" Style="{StaticResource SubtleToggle}" c:Ui.Icon="{StaticResource Icon.Color}" Content="Design"
                               ToolTip="Themes, colours and slide size" AutomationProperties.Name="Design" Margin="0,0,6,0" Click="OnDesign" />
                 <Button x:Name="PresentButton" Style="{StaticResource AccentCommandButton}" c:Ui.Icon="{StaticResource Icon.PlayFilled}" Content="Present"
@@ -115,6 +121,9 @@
                     <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,12" CornerRadius="8" Padding="2"
                             Background="{DynamicResource Flyout.Background}" BorderBrush="{DynamicResource Flyout.Stroke}" BorderThickness="1">
                         <StackPanel Orientation="Horizontal">
+                            <Button x:Name="ViewAidsButton" Style="{StaticResource IconButton}" Width="28" Height="28" c:Ui.Icon="{StaticResource Icon.Ruler}" ToolTip="Rulers, gridlines and guides"
+                                    AutomationProperties.Name="Rulers, gridlines and guides" Click="OnViewAidsMenu" />
+                            <Border Width="1" Margin="2,6" Background="{DynamicResource Divider}" />
                             <Button Style="{StaticResource IconButton}" Width="28" Height="28" c:Ui.Icon="{StaticResource Icon.ZoomOut}" ToolTip="Zoom out (Ctrl+-)"
                                     AutomationProperties.Name="Zoom out" Click="OnZoomOut" />
                             <Button x:Name="ZoomText" Style="{StaticResource SubtleButton}" MinWidth="52" Height="28" Padding="4,0" FontSize="12" ToolTip="Fit to window (Ctrl+0)"
@@ -123,6 +132,8 @@
                                     AutomationProperties.Name="Zoom in" Click="OnZoomIn" />
                         </StackPanel>
                     </Border>
+                    <!-- find and replace -->
+                    <e:FindBar x:Name="FindPanel" />
                     <!-- slide position -->
                     <TextBlock x:Name="SlidePosition" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16,0,0,16" FontSize="12"
                                Foreground="{DynamicResource Text.Tertiary}" IsHitTestVisible="False" />

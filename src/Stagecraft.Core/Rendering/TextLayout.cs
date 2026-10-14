@@ -30,6 +30,37 @@ public sealed class LaidParagraph
     /// <summary>Bullet drawn as a dot of this diameter (0: the marker text is used).</summary>
     public double Dot { get; }
     public Color DotColor { get; }
+
+    /// <summary>Where each run's text is in <see cref="Text"/> (as displayed: capitals applied).</summary>
+    public List<(int Start, int Length, TextRun Run)> Runs { get; } = new();
+
+    /// <summary>The paragraph's displayed text.</summary>
+    public string DisplayText { get; internal set; } = "";
+
+    /// <summary>Not drawn (a text piece of another paragraph is being drawn).</summary>
+    public bool Hidden { get; internal set; }
+
+    /// <summary>The bullet or number isn't drawn (the piece doesn't start the paragraph).</summary>
+    public bool HideMarker { get; internal set; }
+}
+
+/// <summary>Draw only part of a text body: one paragraph, or a range of characters of one paragraph (animated pieces).</summary>
+public readonly struct TextMask
+{
+    public TextMask(int paragraph, int start, int length)
+    {
+        Paragraph = paragraph;
+        Start = start;
+        Length = length;
+    }
+
+    public int Paragraph { get; }
+
+    /// <summary>First character (in the displayed text) and how many; Length &lt; 0 = the whole paragraph.</summary>
+    public int Start { get; }
+    public int Length { get; }
+
+    public static TextMask WholeParagraph(int paragraph) => new(paragraph, 0, -1);
 }
 
 public sealed class TextLayoutResult
@@ -107,12 +138,38 @@ public static class TextLayout
         var weight = run.Bold == true ? Math.Max(700, baseWeight) : run.Bold == false ? Math.Min(baseWeight, 400) : baseWeight;
         var italic = run.Italic ?? body.Italic ?? role.Italic;
         var size = (run.Size ?? body.Size ?? role.Size) * scale;
-        var color = style.Resolve(run.Color ?? body.Color ?? role.Color);
-        return new RunFormat(family, weight, italic, Math.Max(1, size), color, run.Underline == true, run.Strike == true);
+        // Links: the theme's link colour (unless the text has its own colour), always underlined.
+        var color = run.Color == null && run.Link != null ? LinkColorOn(style) : style.Resolve(run.Color ?? body.Color ?? role.Color);
+        return new RunFormat(family, weight, italic, Math.Max(1, size), color, run.Underline == true || run.Link != null, run.Strike == true);
+    }
+
+    /// <summary>The colour reference of links (the scheme's accent, so links stay readable on emphasis slides).</summary>
+    public const string LinkColor = "accent1";
+
+    /// <summary>
+    /// The colour links are drawn in on a slide: the scheme's accent, lightened on dark slides and darkened on light
+    /// ones when it would be hard to read.
+    /// </summary>
+    public static Color LinkColorOn(SlideStyle style)
+    {
+        var c = style.Resolve(LinkColor);
+        static double Luminance(Color x) => (0.2126 * x.R + 0.7152 * x.G + 0.0722 * x.B) / 255;
+        static Color Mix(Color a, Color b, double t) => Color.FromArgb(a.A, (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
+        var l = Luminance(c);
+        if (style.IsDark && l < 0.55) return Mix(c, Colors.White, MathEx.Clamp((0.55 - l) * 1.6, 0.25, 0.6));
+        if (!style.IsDark && l > 0.62) return Mix(c, Colors.Black, 0.3);
+        return c;
     }
 
     /// <summary>Lays out <paramref name="body"/> for a content width, at a size scale (1 = as designed).</summary>
-    public static TextLayoutResult Layout(TextBody body, double width, SlideStyle style, double scale = 1, string? hint = null, Color? hintColor = null)
+    public static TextLayoutResult Layout(TextBody body, double width, SlideStyle style, double scale = 1, string? hint = null, Color? hintColor = null) =>
+        Layout(body, width, style, scale, hint, hintColor, null, false);
+
+    /// <summary>
+    /// Lays out <paramref name="body"/>; with a <paramref name="mask"/> only that piece is visible (everything keeps its
+    /// place), and <paramref name="bold"/> draws every run bold (Bold flash).
+    /// </summary>
+    public static TextLayoutResult Layout(TextBody body, double width, SlideStyle style, double scale, string? hint, Color? hintColor, TextMask? mask, bool bold)
     {
         var role = style.RoleFont(body.Role);
         var uppercase = body.Uppercase ?? role.Uppercase;
@@ -141,17 +198,18 @@ public static class TextLayout
             if (paragraph.List == ListKind.Number) counters[level]++;
             for (var l = paragraph.List == ListKind.Number ? level + 1 : level; l < counters.Length; l++) counters[l] = 0;
 
-            var formats = new List<(int Start, int Length, RunFormat Format)>();
+            var formats = new List<(int Start, int Length, RunFormat Format, TextRun Run)>();
             var text = new System.Text.StringBuilder();
             var maxSize = 0.0;
             RunFormat? first = null;
             foreach (var run in paragraph.Runs)
             {
                 var f = Resolve(run, body, style, scale);
+                if (bold && f.Weight < 700) f = new RunFormat(f.Family, 700, f.Italic, f.Size, f.Color, f.Underline, f.Strike);
                 first ??= f;
                 var t = uppercase ? run.Text.ToUpper(Culture) : run.Text;
                 if (t.Length == 0) continue;
-                formats.Add((text.Length, t.Length, f));
+                formats.Add((text.Length, t.Length, f, run));
                 text.Append(t);
                 maxSize = Math.Max(maxSize, f.Size);
             }
@@ -190,7 +248,7 @@ public static class TextLayout
             }
 
             var ft = Make(text.ToString(), first.Value.Family, first.Value.Weight, first.Value.Italic, first.Value.Size, first.Value.Color);
-            foreach (var (start, length, f) in formats)
+            foreach (var (start, length, f, _) in formats)
             {
                 ft.SetFontFamily(FontCatalog.Get(f.Family), start, length);
                 ft.SetFontWeight(FontWeight.FromOpenTypeWeight(MathEx.Clamp(f.Weight, 1, 999)), start, length);
@@ -217,8 +275,26 @@ public static class TextLayout
             ft.Trimming = TextTrimming.None;
             var x = indent + (paragraph.List == ListKind.None ? Balance(ft, body.Role) : 0);
 
+            var displayText = text.ToString();
+            var laidParagraph = new LaidParagraph(ft, marker, x, markerX, y + (i > 0 ? spacing : 0), dot, dotColor) { DisplayText = displayText };
+            foreach (var (start, length, _, run) in formats) laidParagraph.Runs.Add((start, length, run));
+            if (mask is { } m)
+            {
+                if (m.Paragraph != i) laidParagraph.Hidden = true;
+                else if (m.Length >= 0)
+                {
+                    // Only the piece shows; the rest keeps its place but is see-through.
+                    var s0 = MathEx.Clamp(m.Start, 0, displayText.Length);
+                    var e0 = MathEx.Clamp(m.Start + m.Length, s0, displayText.Length);
+                    if (s0 > 0) ft.SetForegroundBrush(Brushes.Transparent, 0, s0);
+                    if (e0 < displayText.Length) ft.SetForegroundBrush(Brushes.Transparent, e0, displayText.Length - e0);
+                    var firstVisible = 0;
+                    while (firstVisible < displayText.Length && char.IsWhiteSpace(displayText[firstVisible])) firstVisible++;
+                    laidParagraph.HideMarker = s0 > firstVisible;
+                }
+            }
             if (i > 0) y += spacing;
-            laid.Add(new LaidParagraph(ft, marker, x, markerX, y, dot, dotColor));
+            laid.Add(laidParagraph);
             y += ft.Height;
             maxWidth = Math.Max(maxWidth, indent + ft.WidthIncludingTrailingWhitespace);
         }
@@ -354,6 +430,139 @@ public static class TextLayout
         return Layout(body, inner.Width, style, scale);
     }
 
+    /// <summary>Like <see cref="LayoutInBox(TextBody, Rect, SlideStyle, string?, Color?)"/>, showing only a piece and / or all bold.</summary>
+    public static TextLayoutResult LayoutInBox(TextBody body, Rect box, SlideStyle style, TextMask? mask, bool bold)
+    {
+        var inner = Inner(body, box);
+        var scale = FitScale(body, inner.Width, inner.Height, style);
+        return Layout(body, inner.Width, style, scale, null, null, mask, bold);
+    }
+
+    /// <summary>Where the top of each laid paragraph is drawn (the same arithmetic as <see cref="Draw"/>).</summary>
+    public static double VerticalOffset(TextLayoutResult layout, Rect inner, VerticalAlign valign) => valign switch
+    {
+        VerticalAlign.Middle => (inner.Height - layout.Height) / 2,
+        VerticalAlign.Bottom => inner.Height - layout.Height,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// The pieces text animates in: whole paragraphs (with text), words or letters, as character ranges of the
+    /// displayed paragraphs, numbered the way the animation timeline counts them.
+    /// </summary>
+    public static List<(Animation.PieceRef Ref, TextMask Mask)> Pieces(TextBody body, SlideStyle style, TextUnit unit)
+    {
+        var result = new List<(Animation.PieceRef, TextMask)>();
+        var uppercase = body.Uppercase ?? style.RoleFont(body.Role).Uppercase;
+        int ordinal = 0, word = 0, letter = 0;
+        for (var i = 0; i < body.Content.Paragraphs.Count; i++)
+        {
+            var raw = body.Content.Paragraphs[i].Text;
+            var text = uppercase ? raw.ToUpper(Culture) : raw;
+            if (text.Trim().Length == 0) continue;
+            var words = Animation.TextUnits.Ranges(text, TextUnit.Word).ToList();
+            var letters = Animation.TextUnits.Ranges(text, TextUnit.Letter).ToList();
+            switch (unit)
+            {
+                case TextUnit.Word:
+                    foreach (var (s, l) in words)
+                    {
+                        var firstLetter = letter + letters.Count(x => x.Start < s);
+                        result.Add((new Animation.PieceRef(i, ordinal, word++, firstLetter), new TextMask(i, s, l)));
+                    }
+                    break;
+                case TextUnit.Letter:
+                    foreach (var (s, l) in letters)
+                    {
+                        var wordIndex = word + Math.Max(0, words.FindLastIndex(w => w.Start <= s));
+                        result.Add((new Animation.PieceRef(i, ordinal, wordIndex, letter + letters.IndexOf((s, l))), new TextMask(i, s, l)));
+                    }
+                    word += words.Count;
+                    break;
+                default:
+                    result.Add((new Animation.PieceRef(i, ordinal, word, letter), TextMask.WholeParagraph(i)));
+                    word += words.Count;
+                    break;
+            }
+            letter += letters.Count;
+            ordinal++;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Areas (in the box's coordinates, before rotation) covered by characters <paramref name="start"/>..+<paramref name="length"/>
+    /// of paragraph <paramref name="paragraph"/>: one rectangle per line.
+    /// </summary>
+    public static List<Rect> RangeAreas(TextLayoutResult layout, Rect inner, VerticalAlign valign, int paragraph, int start, int length)
+    {
+        var result = new List<Rect>();
+        if (paragraph < 0 || paragraph >= layout.Paragraphs.Count || length <= 0) return result;
+        var p = layout.Paragraphs[paragraph];
+        var top = inner.Y + VerticalOffset(layout, inner, valign) + p.Y;
+        var s = MathEx.Clamp(start, 0, p.DisplayText.Length);
+        var l = MathEx.Clamp(length, 0, p.DisplayText.Length - s);
+        if (l == 0) return result;
+        var geometry = p.Text.BuildHighlightGeometry(new Point(inner.X + p.X, top), s, l);
+        if (geometry == null) return result;
+        foreach (var figure in PathGeometry.CreateFromGeometry(geometry).Figures)
+        {
+            var g = new PathGeometry(new[] { figure });
+            var b = g.Bounds;
+            if (!b.IsEmpty && b.Width > 0 && b.Height > 0) result.Add(b);
+        }
+        return result;
+    }
+
+
+    /// <summary>
+    /// Areas covered by characters of a paragraph counted in the model's text (the runs as stored, before capitals or
+    /// other display changes): used to highlight find results. Box coordinates, before rotation.
+    /// </summary>
+    public static List<Rect> ModelRangeAreas(TextBody body, Rect box, SlideStyle style, int paragraph, int start, int length)
+    {
+        var layout = LayoutInBox(body, box, style);
+        var inner = Inner(body, box);
+        if (paragraph < 0 || paragraph >= layout.Paragraphs.Count || paragraph >= body.Content.Paragraphs.Count) return new List<Rect>();
+        var laid = layout.Paragraphs[paragraph];
+        int Display(int model)
+        {
+            var position = 0;
+            foreach (var run in body.Content.Paragraphs[paragraph].Runs)
+            {
+                var len = run.Text?.Length ?? 0;
+                if (model <= position + len)
+                {
+                    foreach (var (s, l, r) in laid.Runs)
+                        if (ReferenceEquals(r, run)) return s + Math.Min(model - position, l);
+                    return model;
+                }
+                position += len;
+            }
+            return model;
+        }
+        var from = Display(start);
+        var to = Display(start + length);
+        return RangeAreas(layout, inner, body.VAlign, paragraph, from, Math.Max(0, to - from));
+    }
+    /// <summary>The links in a text body and the areas they cover (box coordinates, before rotation).</summary>
+    public static List<(Rect Area, Hyperlink Link)> LinkAreas(TextBody body, Rect box, SlideStyle style)
+    {
+        var result = new List<(Rect, Hyperlink)>();
+        if (!body.Content.Paragraphs.Any(p => p.Runs.Any(r => r.Link != null))) return result;
+        var layout = LayoutInBox(body, box, style);
+        var inner = Inner(body, box);
+        for (var i = 0; i < layout.Paragraphs.Count; i++)
+        {
+            foreach (var (start, length, run) in layout.Paragraphs[i].Runs)
+            {
+                if (run.Link == null) continue;
+                foreach (var area in RangeAreas(layout, inner, body.VAlign, i, start, length)) result.Add((area, run.Link));
+            }
+        }
+        return result;
+    }
+
     public static Rect Inner(TextBody body, Rect box)
     {
         var inset = Math.Max(0, Math.Min(body.Inset, Math.Min(box.Width, box.Height) / 2 - 1));
@@ -371,8 +580,13 @@ public static class TextLayout
         };
         foreach (var p in layout.Paragraphs)
         {
+            if (p.Hidden) continue;
             var top = inner.Y + offset + p.Y;
-            if (p.Dot > 0)
+            if (p.HideMarker)
+            {
+                // A piece in the middle of the paragraph: no bullet.
+            }
+            else if (p.Dot > 0)
             {
                 // Centred on the first line, a little above the middle (where lower-case letters sit).
                 var cy = top + p.Text.LineHeight / 2 + p.Text.LineHeight * 0.02;

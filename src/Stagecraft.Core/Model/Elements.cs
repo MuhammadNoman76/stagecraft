@@ -14,6 +14,9 @@ namespace Stagecraft.Core.Model;
 [JsonDerivedType(typeof(ChartElement), "chart")]
 [JsonDerivedType(typeof(TableElement), "table")]
 [JsonDerivedType(typeof(IconElement), "icon")]
+[JsonDerivedType(typeof(VideoElement), "video")]
+[JsonDerivedType(typeof(AudioElement), "audio")]
+[JsonDerivedType(typeof(OnlineVideoElement), "onlineVideo")]
 public abstract class Element
 {
     public string Id { get; set; } = Ids.New();
@@ -43,8 +46,11 @@ public abstract class Element
     /// <summary>Elements with the same group id move, resize and select together.</summary>
     public string? GroupId { get; set; }
 
-    /// <summary>How it appears in the slide show (null: it's there from the start).</summary>
-    public Build? Build { get; set; }
+    /// <summary>A link followed when the element is clicked in the slide show (Ctrl+click in the editor).</summary>
+    public Hyperlink? Link { get; set; }
+
+    /// <summary>A soft shadow behind the element (null: none).</summary>
+    public Shadow? Shadow { get; set; }
 
     [JsonIgnore]
     public Rect Bounds
@@ -128,6 +134,9 @@ public sealed class TextBody
 
     /// <summary>Padding inside the box, in units.</summary>
     public double Inset { get; set; }
+
+    /// <summary>A shadow behind the letters (null: none).</summary>
+    public Shadow? Shadow { get; set; }
 }
 
 public sealed class TextElement : Element
@@ -152,7 +161,10 @@ public sealed class TextElement : Element
     }
 }
 
-public enum ShapeKind { Rectangle, RoundedRectangle, Ellipse, Triangle, Diamond, Line, Arrow, Callout, Connector }
+public enum ShapeKind { Rectangle, RoundedRectangle, Ellipse, Triangle, Diamond, Line, Arrow, Callout, Connector, ActionButton }
+
+/// <summary>The symbol of an action button (and the slide it goes to by default).</summary>
+public enum ActionButtonKind { Previous, Next, First, Last, Return, Custom }
 
 public enum ArrowHead { None, Arrow, Dot }
 
@@ -185,6 +197,9 @@ public sealed class ShapeElement : Element
     public double TailX { get; set; } = 0.2;
     public double TailY { get; set; } = 1.35;
 
+    /// <summary>Action buttons: the symbol drawn on the button.</summary>
+    public ActionButtonKind Action { get; set; }
+
     [JsonIgnore]
     public bool IsLine => Shape is ShapeKind.Line or ShapeKind.Arrow or ShapeKind.Connector;
 
@@ -199,6 +214,7 @@ public sealed class ShapeElement : Element
         ShapeKind.Arrow => "Arrow",
         ShapeKind.Callout => "Callout",
         ShapeKind.Connector => "Connector",
+        ShapeKind.ActionButton => "Action button",
         _ => "Shape",
     };
 

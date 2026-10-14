@@ -16,6 +16,8 @@ namespace Stagecraft.Views.Editor;
 /// table, icon, arrange, animation), the slide (layout, background, transition) when nothing is selected, or the
 /// design (themes, palettes, slide size).
 /// </summary>
+public enum PanelMode { Properties, Animations, Design }
+
 public sealed partial class PropertiesPanel : UserControl
 {
     private readonly ScrollViewer _scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Focusable = false };
@@ -39,8 +41,11 @@ public sealed partial class PropertiesPanel : UserControl
         };
     }
 
+    /// <summary>What the panel shows: the selection's properties, the slide's animations, or the design.</summary>
+    public PanelMode Mode { get; set; }
+
     /// <summary>Shows themes, palettes and slide size instead of the selection's properties.</summary>
-    public bool DesignMode { get; set; }
+    public bool DesignMode => Mode == PanelMode.Design;
 
     public void Attach(EditorView editor, EditorState state)
     {
@@ -48,6 +53,10 @@ public sealed partial class PropertiesPanel : UserControl
         _state = state;
         state.SelectionChanged += Rebuild;
         state.CurrentSlideChanged += Rebuild;
+        state.EffectSelectionChanged += () =>
+        {
+            if (Mode == PanelMode.Animations) Rebuild();
+        };
         state.LiveChange += () => _refreshNumbers?.Invoke();
         RebuildNow();
     }
@@ -72,8 +81,9 @@ public sealed partial class PropertiesPanel : UserControl
         _refreshNumbers = null;
         try
         {
-            if (DesignMode) BuildDesign();
+            if (Mode == PanelMode.Design) BuildDesign();
             else if (_state.CurrentSlide == null) Empty();
+            else if (Mode == PanelMode.Animations) BuildAnimationPane();
             else if (_state.Selection.Count == 0) BuildSlide();
             else BuildElements();
         }
@@ -300,6 +310,16 @@ public sealed partial class PropertiesPanel : UserControl
         return b;
     }
 
+
+    /// <summary>A colour reference without its "@opacity" part.</summary>
+    private static string BaseColor(string color) => color.Split('@')[0];
+
+    /// <summary><paramref name="picked"/> with the opacity of <paramref name="old"/> ("accent1@40" keeps "@40").</summary>
+    private static string WithAlphaOf(string picked, string? old)
+    {
+        var at = old?.IndexOf('@') ?? -1;
+        return BaseColor(picked) + (at > 0 ? old!.Substring(at) : "");
+    }
     private Button SwatchButton(Brush brush, string tip, bool selected, Action click)
     {
         var b = new Button { Background = brush, ToolTip = tip, Tag = selected ? "selected" : null };

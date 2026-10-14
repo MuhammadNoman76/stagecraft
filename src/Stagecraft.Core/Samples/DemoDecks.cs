@@ -77,10 +77,65 @@ public static class DemoDecks
         if (slide.Elements.FirstOrDefault(x => x.Placeholder == placeholder) is ImageElement img) img.Media = media;
     }
 
-    private static void Build(Slide slide, string placeholder, BuildEffect effect, int step, double delay = 0)
+    /// <summary>Adds an effect for the element in a placeholder (or an element itself) to the end of the slide's animation order.</summary>
+    private static AnimationEffect? Animate(Slide slide, string placeholder, EffectKind kind, EffectStart start, double delay = 0, double? duration = null,
+        EffectClass cls = EffectClass.Entrance, EffectDirection? direction = null)
     {
         var e = slide.Elements.FirstOrDefault(x => x.Placeholder == placeholder);
-        if (e != null) e.Build = new Build { Effect = effect, Step = step, Delay = delay, Duration = 0.6 };
+        return e == null ? null : Animate(slide, e, kind, start, delay, duration, cls, direction);
+    }
+
+    private static AnimationEffect Animate(Slide slide, Element e, EffectKind kind, EffectStart start, double delay = 0, double? duration = null,
+        EffectClass cls = EffectClass.Entrance, EffectDirection? direction = null)
+    {
+        var effect = EffectCatalog.Create(cls, kind, e.Id);
+        effect.Start = start;
+        effect.Delay = delay;
+        if (duration != null) effect.Duration = duration.Value;
+        if (direction != null) effect.Direction = direction.Value;
+        slide.Animations.Add(effect);
+        return effect;
+    }
+
+    /// <summary>A file of Assets\SampleMedia (original, generated with ffmpeg: see tools\make-sample-media.ps1).</summary>
+    private static byte[] SampleMedia(string name)
+    {
+        using var stream = typeof(DemoDecks).Assembly.GetManifestResourceStream("Stagecraft.SampleMedia." + name)
+                           ?? throw new FileNotFoundException("Missing sample media " + name);
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return ms.ToArray();
+    }
+
+    private static TextElement? Placeholder(Slide slide, string name) => slide.Elements.FirstOrDefault(x => x.Placeholder == name) as TextElement;
+
+    /// <summary>Puts a link on the part of a text placeholder that says <paramref name="words"/>.</summary>
+    private static void LinkWords(Slide slide, string placeholder, string words, Hyperlink link)
+    {
+        if (Placeholder(slide, placeholder) is not { } t) return;
+        foreach (var p in t.Text.Content.Paragraphs)
+        {
+            var text = Editing.FindReplace.TextOf(p);
+            var at = text.IndexOf(words, StringComparison.Ordinal);
+            if (at < 0) continue;
+            var before = text.Substring(0, at);
+            var after = text.Substring(at + words.Length);
+            var template = p.Runs.FirstOrDefault() ?? new TextRun();
+            p.Runs.Clear();
+            TextRun Piece(string s)
+            {
+                var r = template.Clone();
+                r.Text = s;
+                r.Link = null;
+                return r;
+            }
+            if (before.Length > 0) p.Runs.Add(Piece(before));
+            var linked = Piece(words);
+            linked.Link = link;
+            p.Runs.Add(linked);
+            if (after.Length > 0) p.Runs.Add(Piece(after));
+            return;
+        }
     }
 
     private static ChartElement Chart(Deck deck, ChartKind kind, string[] categories, params (string Name, double[] Values)[] series)
@@ -129,27 +184,30 @@ public static class DemoDecks
             Set(s, "item3", "How we'll get there");
             Set(s, "item4", "Who's on the team");
         }, TransitionKind.Morph, "Four parts, about twenty minutes, then questions.");
-        for (var i = 1; i <= 4; i++) Build(agenda, "item" + i, BuildEffect.Rise, 1, (i - 1) * 0.12);
+        for (var i = 1; i <= 4; i++) Animate(agenda, "item" + i, EffectKind.Rise, i == 1 ? EffectStart.OnClick : EffectStart.WithPrevious, (i - 1) * 0.12, 0.6);
 
-        b.Add(LayoutIds.Section, s =>
+        var part1 = b.Add(LayoutIds.Section, s =>
         {
             Set(s, "label", "Part 01");
             Set(s, "title", "Why we're here");
         }, TransitionKind.Push);
 
-        b.Add(LayoutIds.BigNumber, s =>
+        var goal = b.Add(LayoutIds.BigNumber, s =>
         {
             Set(s, "number", "3×");
             Set(s, "title", "faster onboarding is our goal");
             Set(s, "body", "New customers should reach their first success in minutes, not hours.");
         }, notes: "This is the one number to remember. Everything else supports it.");
+        Animate(goal, "number", EffectKind.Zoom, EffectStart.AfterPrevious, 0.2, 0.7);
+        Animate(goal, "number", EffectKind.Pulse, EffectStart.AfterPrevious, 0.1, 0.8, EffectClass.Emphasis);
 
         var heard = b.Add(LayoutIds.TitleContent, s =>
         {
             Set(s, "title", "What we heard from customers");
             Bullets(s, "body", "Setting up takes too many steps", "Key features are hard to find", "The phone app lags behind the desktop", "People love the reports once they find them");
         }, notes: "Quotes from 40 interviews and 1,200 survey answers.");
-        Build(heard, "body", BuildEffect.Fade, 1);
+        var heardBody = Animate(heard, "body", EffectKind.Fade, EffectStart.OnClick, 0, 0.6);
+        if (heardBody != null) heardBody.TextUnit = TextUnit.Paragraph;
 
         var chartSlide = b.Add(LayoutIds.TitleOnly, s => Set(s, "title", "Weekly active users (thousands)"));
         chartSlide.Elements.Add(Chart(b.Deck, ChartKind.Bar, new[] { "Jan", "Feb", "Mar", "Apr", "May", "Jun" },
@@ -161,6 +219,29 @@ public static class DemoDecks
             Set(s, "title", "A calmer, faster app");
             Bullets(s, "body", "One home screen for what matters", "Guided setup in under five minutes", "The same experience on every device");
         }, TransitionKind.Fade);
+
+        // A short clip of the new app's look (original footage made with ffmpeg), played on click.
+        var look = b.Add(LayoutIds.TitleOnly, s => Set(s, "title", "A first look"), TransitionKind.Fade, "The video plays on the next click (or click it). It runs for eight seconds.");
+        var clipW = 1180.0;
+        var clipH = clipW * 9 / 16;
+        var clip = new VideoElement
+        {
+            Media = b.Media.Add(SampleMedia("aurora-loop.mp4"), ".mp4"),
+            Poster = b.Media.Add(SampleMedia("aurora-poster.jpg"), ".jpg"),
+            FileName = "aurora-loop.mp4",
+            Length = 8,
+            X = (b.Deck.Width - clipW) / 2,
+            Y = 300,
+            Width = clipW,
+            Height = clipH,
+            CornerRadius = 28,
+            Volume = 0.7,
+            FadeIn = 0.5,
+            Shadow = Shadow.Lifted,
+            Name = "Product video",
+        };
+        look.Elements.Add(clip);
+        Editing.AnimationOps.SetStart(look, clip, Editing.MediaStart.OnClick);
 
         var timeline = b.Add(LayoutIds.Timeline, s =>
         {
@@ -175,11 +256,11 @@ public static class DemoDecks
         }, notes: "Each phase ends with a demo to the whole company.");
         for (var i = 1; i <= 4; i++)
         {
-            Build(timeline, "date" + i, BuildEffect.Rise, i);
-            Build(timeline, "step" + i, BuildEffect.Rise, i, 0.1);
+            Animate(timeline, "date" + i, EffectKind.Rise, EffectStart.OnClick, 0, 0.6);
+            Animate(timeline, "step" + i, EffectKind.Rise, EffectStart.WithPrevious, 0.1, 0.6);
         }
 
-        b.Add(LayoutIds.Team, s =>
+        var teamSlide = b.Add(LayoutIds.Team, s =>
         {
             Set(s, "title", "Who's on the team");
             for (var i = 0; i < team.Length; i++)
@@ -196,15 +277,21 @@ public static class DemoDecks
             Set(s, "author", "— Aurora team principle");
         });
 
-        b.Add(LayoutIds.ThankYou, s =>
+        var thanks = b.Add(LayoutIds.ThankYou, s =>
         {
             Set(s, "title", "Thank you");
             Set(s, "subtitle", "Questions and ideas: aurora-team@example.com");
         }, TransitionKind.Zoom);
+        LinkWords(thanks, "subtitle", "aurora-team@example.com", Hyperlink.Email("aurora-team@example.com", "Aurora kickoff"));
+
+        // The agenda links to its parts (Ctrl+click in the editor, a click in the show).
+        if (Placeholder(agenda, "item1") is { } i1) i1.Link = Hyperlink.ToSlide(SlideJump.Specific, part1.Id);
+        if (Placeholder(agenda, "item4") is { } i4) i4.Link = Hyperlink.ToSlide(SlideJump.Specific, teamSlide.Id);
         return b.Done();
     }
 
     // ------------------------------------------------------------------ 2. Quarterly review
+
 
     public static DeckDocument QuarterlyReview()
     {
@@ -217,12 +304,13 @@ public static class DemoDecks
             Set(s, "subtitle", "Results, highlights and the plan for Q4");
         });
 
-        b.Add(LayoutIds.BigNumber, s =>
+        var growth = b.Add(LayoutIds.BigNumber, s =>
         {
             Set(s, "number", "+28%");
             Set(s, "title", "revenue growth year over year");
             Set(s, "body", "Our strongest quarter so far, led by subscriptions and two new regions.");
         }, TransitionKind.Morph);
+        Animate(growth, "number", EffectKind.Zoom, EffectStart.AfterPrevious, 0.3, 0.7);
 
         var line = b.Add(LayoutIds.TitleOnly, s => Set(s, "title", "Monthly revenue (thousands)"));
         var lc = Chart(b.Deck, ChartKind.Line, new[] { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep" },
@@ -231,8 +319,9 @@ public static class DemoDecks
         lc.ValueFormat = "#,0";
         lc.ShowValues = false;
         line.Elements.Add(lc);
+        Animate(line, lc, EffectKind.Wipe, EffectStart.OnClick, 0, 1.2, direction: EffectDirection.Left);
 
-        b.Add(LayoutIds.Comparison, s =>
+        var looking = b.Add(LayoutIds.Comparison, s =>
         {
             Set(s, "title", "Looking back");
             Set(s, "heading1", "What went well");
@@ -240,6 +329,11 @@ public static class DemoDecks
             Set(s, "heading2", "What we'll improve");
             Bullets(s, "body2", "Onboarding still takes too long", "Hardware margins are thin", "Hiring is behind plan");
         });
+        foreach (var (body, from) in new[] { ("body", EffectDirection.Left), ("body2", EffectDirection.Right) })
+        {
+            var fly = Animate(looking, body, EffectKind.Fly, EffectStart.OnClick, 0, 0.5, direction: from);
+            if (fly != null) fly.TextUnit = TextUnit.Paragraph;
+        }
 
         var tableSlide = b.Add(LayoutIds.TitleOnly, s => Set(s, "title", "Results by region"));
         var m = b.Deck.Theme.Margin;
@@ -266,6 +360,7 @@ public static class DemoDecks
         var donut = Chart(b.Deck, ChartKind.Donut, new[] { "Subscriptions", "Services", "Hardware" }, ("Total revenue", new double[] { 1240, 575, 325 }));
         donut.ValueFormat = "'$'#,0'K'";
         donutSlide.Elements.Add(donut);
+        Animate(donutSlide, donut, EffectKind.Wheel, EffectStart.AfterPrevious, 0.2, 1.0);
 
         b.Add(LayoutIds.ImageRight, s =>
         {
@@ -274,11 +369,12 @@ public static class DemoDecks
             Bullets(s, "body", "Launch the new onboarding flow", "Open the second office", "Hire twelve engineers", "Grow the partner programme");
         });
 
-        b.Add(LayoutIds.ThankYou, s =>
+        var end = b.Add(LayoutIds.ThankYou, s =>
         {
             Set(s, "title", "Thank you");
-            Set(s, "subtitle", "Full numbers are in the appendix");
+            Set(s, "subtitle", "Results by region are on slide 5");
         });
+        LinkWords(end, "subtitle", "slide 5", Hyperlink.ToSlide(SlideJump.Specific, tableSlide.Id));
         return b.Done();
     }
 
@@ -288,13 +384,31 @@ public static class DemoDecks
     {
         var b = new Builder("botanical", "desert", "Coffee shop pitch");
         var coffee = b.Picture(SampleArt.Coffee());
-        var dawn = b.Picture(SampleArt.Dawn());
+        var dawn = b.Picture(SampleArt.Dawn(sun: false)); // the slide animates its own sun
 
-        b.Add(LayoutIds.ImageFull, s =>
+        var cover = b.Add(LayoutIds.ImageFull, s =>
         {
             Image(s, "image", coffee);
             Set(s, "title", "Ember & Oak Coffee");
             Set(s, "subtitle", "A neighbourhood café with a roastery inside");
+        }, notes: "Click the speaker for some quiet music; it keeps playing for the next three slides.");
+        // Calm background music (an original synthesized pad), started by clicking its speaker.
+        cover.Elements.Add(new AudioElement
+        {
+            Media = b.Media.Add(SampleMedia("soft-pad.m4a"), ".m4a"),
+            FileName = "soft-pad.m4a",
+            Length = 16,
+            X = b.Deck.Width - 150,
+            Y = b.Deck.Height - 150,
+            Width = 84,
+            Height = 84,
+            AcrossSlides = true,
+            StopAfterSlides = 3,
+            Volume = 0.6,
+            FadeIn = 1,
+            FadeOut = 2,
+            Color = "#FFFFFF@85",
+            Name = "Background music",
         });
 
         var opportunity = b.Add(LayoutIds.TitleContent, s =>
@@ -302,14 +416,16 @@ public static class DemoDecks
             Set(s, "title", "The opportunity");
             Bullets(s, "body", "A growing neighbourhood with no specialty café", "Commuters pass by every morning", "Local offices want a place to meet");
         });
-        Build(opportunity, "body", BuildEffect.Rise, 1);
+        var rise = Animate(opportunity, "body", EffectKind.Rise, EffectStart.OnClick, 0, 0.6);
+        if (rise != null) rise.TextUnit = TextUnit.Paragraph;
 
-        b.Add(LayoutIds.BigNumber, s =>
+        var locals = b.Add(LayoutIds.BigNumber, s =>
         {
             Set(s, "number", "1 in 3");
             Set(s, "title", "locals buy coffee every day");
             Set(s, "body", "Yet the nearest specialty café is a 15-minute walk away.");
         }, TransitionKind.Morph);
+        Animate(locals, "number", EffectKind.GrowTurn, EffectStart.AfterPrevious, 0.2, 0.8);
 
         b.Add(LayoutIds.Comparison, s =>
         {
@@ -324,13 +440,38 @@ public static class DemoDecks
         var vc = Chart(b.Deck, ChartKind.Bar, new[] { "Month 1", "Month 2", "Month 3", "Month 4", "Month 5", "Month 6" }, ("Visitors", new double[] { 120, 165, 210, 240, 275, 310 }));
         vc.ShowLegend = false;
         visitors.Elements.Add(vc);
+        Animate(visitors, vc, EffectKind.Wipe, EffectStart.OnClick, 0, 1.0, direction: EffectDirection.Bottom);
 
-        b.Add(LayoutIds.ImageLeft, s =>
+        var morning = b.Add(LayoutIds.ImageLeft, s =>
         {
             Image(s, "image", dawn);
             Set(s, "title", "Open from 7 am");
             Bullets(s, "body", "Morning rush: grab-and-go window", "Afternoons: meetings and study", "Evenings: tastings twice a month");
         });
+        // The sun rises over the picture along a curved motion path.
+        if (morning.Elements.FirstOrDefault(e => e.Placeholder == "image") is { } picture)
+        {
+            var sun = new ShapeElement
+            {
+                Shape = ShapeKind.Ellipse,
+                Fill = Fill.Radial("#FFE6A8", "#FFB547"),
+                Stroke = null,
+                Shadow = new Shadow { Color = "#FFB547@70", Blur = 46, Distance = 0, Angle = 90 },
+                Width = 130,
+                Height = 130,
+                X = picture.X + picture.Width * 0.1,
+                Y = picture.Y + picture.Height * 0.36,
+                Name = "Sun",
+            };
+            morning.Elements.Insert(morning.Elements.IndexOf(picture) + 1, sun);
+            var path = Animate(morning, sun, EffectKind.Custom, EffectStart.AfterPrevious, 0.3, 2.6, EffectClass.Motion);
+            path.Path = new MotionPath
+            {
+                Smooth = true,
+                Points = { new PathPoint(0, 0), new PathPoint(picture.Width * 0.24, -picture.Height * 0.15), new PathPoint(picture.Width * 0.5, -picture.Height * 0.22) },
+            };
+            path.Easing = EffectEasing.EaseOut;
+        }
 
         b.Add(LayoutIds.Team, s =>
         {
@@ -358,11 +499,12 @@ public static class DemoDecks
             Set(s, "author", "— From our founders' notebook");
         });
 
-        b.Add(LayoutIds.ThankYou, s =>
+        var brew = b.Add(LayoutIds.ThankYou, s =>
         {
             Set(s, "title", "Let's brew something together");
-            Set(s, "subtitle", "hello@example.com");
+            Set(s, "subtitle", "hello@example.com · ember-and-oak.example");
         });
+        LinkWords(brew, "subtitle", "hello@example.com", Hyperlink.Email("hello@example.com", "Ember & Oak"));
         return b.Done();
     }
 }

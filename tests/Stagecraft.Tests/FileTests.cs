@@ -134,7 +134,7 @@ public class FileTests
     public void Load_NewerSchema_IsRefused() => Sta.Run(() =>
     {
         var deck = DeckOperations.NewDeck();
-        var json = DeckJson.Serialize(deck).Replace("\"schemaVersion\": 1", "\"schemaVersion\": 99");
+        var json = DeckJson.Serialize(deck).Replace("\"schemaVersion\": " + Deck.CurrentSchemaVersion, "\"schemaVersion\": 99");
         Assert.Contains("99", json);
         var ex = Assert.Throws<DeckFileException>(() => DeckFile.ParseDeck(json, out _));
         Assert.Equal(DeckFileProblem.TooNew, ex.Problem);

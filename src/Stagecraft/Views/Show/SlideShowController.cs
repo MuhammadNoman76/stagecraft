@@ -100,7 +100,55 @@ public sealed class SlideShowController
     public event Action? InkCleared;
     public event Action? ShowEnded;
 
-    public int StepCount(Slide? slide) => slide == null ? 0 : Builds.StepCount(slide);
+    /// <summary>A trigger element was clicked: (element or group id, which of its groups plays).</summary>
+    public event Action<string, int>? TriggerFired;
+
+    /// <summary>A video or sound was told what to do (both windows follow; only the audience's makes sound).</summary>
+    internal event Action<string, MediaAction, double?>? MediaCommand;
+
+    /// <summary>A web, e-mail or file link was clicked (the window opens it, asking first for files).</summary>
+    public event Action<Hyperlink>? LinkRequested;
+
+    private readonly Dictionary<string, Animator> _animators = new();
+    private readonly Dictionary<string, int> _triggerClicks = new();
+    private int _lastViewed = -1;
+
+    /// <summary>The animations of a slide, resolved once per show.</summary>
+    public Animator AnimatorFor(Slide slide)
+    {
+        if (!_animators.TryGetValue(slide.Id, out var animator))
+            _animators[slide.Id] = animator = new Animator(SlideTimeline.Build(slide), new Size(Session.Deck.Width, Session.Deck.Height));
+        return animator;
+    }
+
+    /// <summary>How many clicks a slide's animations take.</summary>
+    public int StepCount(Slide? slide) => slide == null ? 0 : AnimatorFor(slide).Timeline.Clicks;
+
+    /// <summary>Plays the next group of a trigger element's animations (after the last, they start again).</summary>
+    public void FireTrigger(string elementId)
+    {
+        if (Ended || Current == null) return;
+        if (!AnimatorFor(Current).Timeline.Triggers.TryGetValue(elementId, out var groups) || groups.Count == 0) return;
+        _triggerClicks.TryGetValue(elementId, out var next);
+        if (next >= groups.Count) next = 0;
+        _triggerClicks[elementId] = next + 1;
+        TriggerFired?.Invoke(elementId, next);
+    }
+
+    internal void SendMedia(string elementId, MediaAction action, double? position) => MediaCommand?.Invoke(elementId, action, position);
+
+    /// <summary>Follows a link: slide links jump; web, e-mail and file links go to the window to open.</summary>
+    public void FollowLink(Hyperlink link)
+    {
+        if (Ended) return;
+        if (link.Kind != LinkKind.Slide)
+        {
+            LinkRequested?.Invoke(link);
+            return;
+        }
+        var target = LinkSafety.JumpTarget(link, Slides, Index, _lastViewed);
+        if (target >= 0 && target != Index) GoTo(target);
+    }
 
     public StrokeCollection InkFor(Slide slide)
     {
@@ -177,6 +225,8 @@ public sealed class SlideShowController
         var from = AtEnd ? null : Current;
         RecordTime();
         AtEnd = false;
+        if (index != Index) _lastViewed = Index;
+        _triggerClicks.Clear();
         Index = index;
         Step = step;
         Laser = null;

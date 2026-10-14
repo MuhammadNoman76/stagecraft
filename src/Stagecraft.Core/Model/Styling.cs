@@ -30,7 +30,7 @@ public sealed class Fill
     public bool IsVisible => Kind != FillKind.None;
 }
 
-public enum DashStyleKind { Solid, Dash, Dot }
+public enum DashStyleKind { Solid, Dash, Dot, LongDash, DashDot }
 
 public sealed class Stroke
 {
@@ -42,18 +42,31 @@ public sealed class Stroke
     public Stroke Clone() => new() { Color = Color, Width = Width, Dash = Dash };
 }
 
-public enum BuildEffect { None, Appear, Fade, Rise, Scale, Wipe }
-
-/// <summary>A build animation: the element appears on click number <see cref="Step"/> of its slide.</summary>
-public sealed class Build
+/// <summary>
+/// A soft shadow: a blurred, offset silhouette of the element (or of the letters, on text). The colour is a reference,
+/// so shadows follow the theme ("#000000@35", "accent1@40").
+/// </summary>
+public sealed class Shadow
 {
-    public BuildEffect Effect { get; set; } = BuildEffect.Fade;
-    /// <summary>1 = the first click on the slide; elements with the same step appear together.</summary>
-    public int Step { get; set; } = 1;
-    /// <summary>Seconds after the click.</summary>
-    public double Delay { get; set; }
-    /// <summary>Seconds.</summary>
-    public double Duration { get; set; } = 0.5;
+    public string Color { get; set; } = "#000000@30";
 
-    public Build Clone() => new() { Effect = Effect, Step = Step, Delay = Delay, Duration = Duration };
+    /// <summary>Blur radius in units.</summary>
+    public double Blur { get; set; } = 28;
+
+    /// <summary>How far the shadow falls, in units.</summary>
+    public double Distance { get; set; } = 10;
+
+    /// <summary>The direction the shadow falls, in degrees (90 = straight down).</summary>
+    public double Angle { get; set; } = 90;
+
+    public Shadow Clone() => new() { Color = Color, Blur = Blur, Distance = Distance, Angle = Angle };
+
+    public bool SameAs(Shadow? other) => other != null && other.Color == Color && Math.Abs(other.Blur - Blur) < 0.001 &&
+                                         Math.Abs(other.Distance - Distance) < 0.001 && Math.Abs(other.Angle - Angle) < 0.001;
+
+    /// <summary>The presets the panel offers.</summary>
+    public static Shadow Soft => new() { Color = "#000000@30", Blur = 28, Distance = 10, Angle = 90 };
+    public static Shadow Lifted => new() { Color = "#000000@40", Blur = 48, Distance = 24, Angle = 90 };
+    public static Shadow Close => new() { Color = "#000000@45", Blur = 8, Distance = 5, Angle = 45 };
+    public static Shadow Glow => new() { Color = "accent1@60", Blur = 40, Distance = 0, Angle = 90 };
 }

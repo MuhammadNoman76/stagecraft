@@ -8,7 +8,7 @@
 
 #define AppName "Stagecraft"
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 #ifndef Edition
   #define Edition "x64"

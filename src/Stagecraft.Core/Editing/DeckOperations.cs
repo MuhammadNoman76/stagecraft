@@ -1,4 +1,5 @@
 using System.Windows;
+using Stagecraft.Core.Animation;
 using Stagecraft.Core.IO;
 using Stagecraft.Core.Layouts;
 using Stagecraft.Core.Model;
@@ -43,38 +44,61 @@ public static class DeckOperations
         copy.Id = Ids.New();
         copy.Section = null;
         copy.RehearsedSeconds = null;
-        var groups = new Dictionary<string, string>();
-        for (var i = 0; i < copy.Elements.Count; i++)
-        {
-            var original = slide.Elements[i];
-            var e = copy.Elements[i];
-            e.Id = Ids.New();
-            e.MorphKey = original.MorphKey ?? original.Id;
-            if (e.GroupId != null)
-            {
-                if (!groups.TryGetValue(e.GroupId, out var g)) groups[e.GroupId] = g = Ids.New();
-                e.GroupId = g;
-            }
-        }
+        RenewIds(copy, keepMorphIdentity: true);
         return copy;
     }
 
-    /// <summary>Copies of elements with new ids (and new group ids), moved by an offset.</summary>
-    public static List<Element> CopyElements(IEnumerable<Element> elements, double dx, double dy, bool keepMorphIdentity = false)
+    /// <summary>
+    /// Gives every element (and group) of a copied slide a new id and keeps what refers to them working: connectors,
+    /// animation targets and triggers. With <paramref name="keepMorphIdentity"/> the elements keep their Morph identity.
+    /// Returns the map from old to new ids.
+    /// </summary>
+    public static Dictionary<string, string> RenewIds(Slide copy, bool keepMorphIdentity)
     {
-        var groups = new Dictionary<string, string>();
+        var map = new Dictionary<string, string>();
+        foreach (var e in copy.Elements)
+        {
+            var old = e.Id;
+            var fresh = Ids.New();
+            map[old] = fresh;
+            e.MorphKey = keepMorphIdentity ? e.MorphKey ?? old : null;
+            e.Id = fresh;
+            if (e.GroupId != null)
+            {
+                if (!map.TryGetValue(e.GroupId, out var g)) map[e.GroupId] = g = Ids.New();
+                e.GroupId = g;
+            }
+        }
+        foreach (var c in copy.Elements.OfType<ShapeElement>())
+        {
+            if (c.StartId != null) c.StartId = map.TryGetValue(c.StartId, out var s) ? s : null;
+            if (c.EndId != null) c.EndId = map.TryGetValue(c.EndId, out var t) ? t : null;
+        }
+        copy.Animations = AnimationRules.CopyFor(copy.Animations, map);
+        return map;
+    }
+
+    /// <summary>Copies of elements with new ids (and new group ids), moved by an offset.</summary>
+    public static List<Element> CopyElements(IEnumerable<Element> elements, double dx, double dy, bool keepMorphIdentity = false) =>
+        CopyElements(elements, dx, dy, out _, keepMorphIdentity);
+
+    /// <summary>Copies of elements with new ids; <paramref name="idMap"/> maps old element and group ids to the new ones.</summary>
+    public static List<Element> CopyElements(IEnumerable<Element> elements, double dx, double dy, out Dictionary<string, string> idMap, bool keepMorphIdentity = false)
+    {
+        idMap = new Dictionary<string, string>();
         var result = new List<Element>();
         foreach (var e in elements)
         {
             var copy = DeckJson.Clone(e);
             copy.MorphKey = keepMorphIdentity ? e.MorphKey ?? e.Id : null;
             copy.Id = Ids.New();
+            idMap[e.Id] = copy.Id;
             copy.Placeholder = copy.Placeholder == "decor" ? null : copy.Placeholder;
             copy.X += dx;
             copy.Y += dy;
             if (copy.GroupId != null)
             {
-                if (!groups.TryGetValue(copy.GroupId, out var g)) groups[copy.GroupId] = g = Ids.New();
+                if (!idMap.TryGetValue(copy.GroupId, out var g)) idMap[copy.GroupId] = g = Ids.New();
                 copy.GroupId = g;
             }
             result.Add(copy);

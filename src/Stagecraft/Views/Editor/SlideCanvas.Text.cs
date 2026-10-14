@@ -120,6 +120,8 @@ public sealed partial class SlideCanvas
         TextOptions.SetTextFormattingMode(rtb, TextFormattingMode.Ideal);
         System.Windows.Automation.AutomationProperties.SetName(rtb, "Edit text: " + element.Describe);
         DataObject.AddPastingHandler(rtb, OnPasteIntoText);
+        TextContextMenu.ApplySpelling(rtb);
+        TextContextMenu.Attach(rtb, menu => TextMenuOpening?.Invoke(menu));
         rtb.TextChanged += (_, _) => ScheduleFit();
         rtb.SelectionChanged += (_, _) => TextSelectionChanged?.Invoke();
         rtb.PreviewKeyDown += OnTextKey;

@@ -16,10 +16,12 @@ namespace Stagecraft.Core.Import;
 /// <summary>
 /// Imports PowerPoint (.pptx) files: slide size, text (with basic formatting, bullets and alignment), shapes,
 /// lines, pictures (with cropping), tables, simple charts (bar, line, pie, doughnut from their cached data), groups,
-/// backgrounds, transitions and speaker notes. SmartArt, other chart types, animations, video, embedded objects and
-/// the finer points of master / layout inheritance are not imported faithfully; the import reports what it left out.
+/// backgrounds, transitions, speaker notes, hyperlinks and action buttons, videos and sounds (embedded or linked, with
+/// trim and fades) and animations (effects Stagecraft lacks become the closest one). SmartArt, other chart types,
+/// embedded objects and the finer points of master / layout inheritance are not imported faithfully; the import
+/// reports what it left out or changed.
 /// </summary>
-public static class PptxImporter
+public static partial class PptxImporter
 {
     private const double EmuPerUnit = 6350;
 
@@ -43,7 +45,7 @@ public static class PptxImporter
         return importer.Run();
     }
 
-    private sealed class Importer
+    private sealed partial class Importer
     {
         private readonly PresentationDocument _doc;
         private readonly MediaStore _media = new();
@@ -92,6 +94,8 @@ public static class PptxImporter
 
             var ids = presentation?.SlideIdList?.Elements<P.SlideId>().ToList() ?? new List<P.SlideId>();
             foreach (var id in ids)
+                if (id.RelationshipId?.Value is { } r0 && presentationPart.GetPartById(r0) is SlidePart sp0 && !_slideIds.ContainsKey(sp0)) _slideIds[sp0] = Ids.New();
+            foreach (var id in ids)
             {
                 if (id.RelationshipId?.Value is not { } rid) continue;
                 if (presentationPart.GetPartById(rid) is not SlidePart slidePart) continue;
@@ -105,6 +109,7 @@ public static class PptxImporter
                 }
             }
 
+            AddMediaAndAnimationWarnings(_warnings);
             var result = new DeckDocument(_deck, _media);
             foreach (var pair in _skipped)
                 result.Warnings.Add(pair.Value == 1 ? $"1 {pair.Key} was left out." : $"{pair.Value} {Plural(pair.Key)} were left out.");
@@ -328,7 +333,8 @@ public static class PptxImporter
 
         private Slide ReadSlide(SlidePart part)
         {
-            var slide = new Slide { Layout = "blank" };
+            var slide = new Slide { Layout = "blank", Id = _slideIds.TryGetValue(part, out var known) ? known : Ids.New() };
+            _spids.Clear();
             var ctx = new Context { Slide = part, Layout = part.SlideLayoutPart, Master = part.SlideLayoutPart?.SlideMasterPart };
             _clrMap = ReadClrMap(ctx.Master?.SlideMaster?.ColorMap);
             var data = part.Slide;
@@ -349,6 +355,7 @@ public static class PptxImporter
 
             var tree = data?.CommonSlideData?.ShapeTree;
             if (tree != null) ReadTree(tree, slide, ctx, part, Matrix.Identity, null);
+            ReadTiming(data, slide, part);
 
             slide.Notes = ReadNotes(part);
             slide.Transition = ReadTransition(data);
@@ -460,6 +467,7 @@ public static class PptxImporter
         {
             foreach (var child in tree.ChildElements)
             {
+                _owner = owner;
                 switch (child)
                 {
                     case P.Shape sp:
@@ -568,6 +576,7 @@ public static class PptxImporter
                 ReadHeads(spPr?.GetFirstChild<A.Outline>(), line);
                 Place(line, box.Value, 0, fh, fv, groupId);
                 slide.Elements.Add(line);
+                Added(line, sp.NonVisualShapeProperties?.NonVisualDrawingProperties, owner);
                 return;
             }
 
@@ -580,6 +589,7 @@ public static class PptxImporter
                 var text = new TextElement { Text = body, Name = name };
                 Place(text, box.Value, rot, false, false, groupId);
                 slide.Elements.Add(text);
+                Added(text, sp.NonVisualShapeProperties?.NonVisualDrawingProperties, owner);
                 return;
             }
 
@@ -592,7 +602,7 @@ public static class PptxImporter
                 "wedgeRectCallout" or "wedgeRoundRectCallout" or "wedgeEllipseCallout" => ShapeKind.Callout,
                 _ => ShapeKind.Rectangle,
             };
-            if (!KnownShapes.Contains(preset)) _warnings.Add("Shapes Stagecraft doesn't have were imported as rectangles.");
+            if (!KnownShapes.Contains(preset) && !preset.StartsWith("actionButton", StringComparison.Ordinal)) _warnings.Add("Shapes Stagecraft doesn't have were imported as rectangles.");
             var shape = new ShapeElement { Shape = kind, Fill = fill ?? Fill.None, Stroke = stroke, Text = body is { Content.IsEmpty: false } ? body : null, Name = name };
             if (kind == ShapeKind.RoundedRectangle)
             {
@@ -600,8 +610,23 @@ public static class PptxImporter
                 var fraction = adj != null && adj.StartsWith("val ", StringComparison.Ordinal) && double.TryParse(adj.Substring(4), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v / 100000 : 0.1667;
                 shape.CornerRadius = Math.Round(Math.Min(box.Value.Width, box.Value.Height) * fraction, 1);
             }
+            if (preset.StartsWith("actionButton", StringComparison.Ordinal))
+            {
+                shape.Shape = ShapeKind.ActionButton;
+                shape.Action = preset switch
+                {
+                    "actionButtonBackPrevious" => ActionButtonKind.Previous,
+                    "actionButtonForwardNext" => ActionButtonKind.Next,
+                    "actionButtonBeginning" or "actionButtonHome" => ActionButtonKind.First,
+                    "actionButtonEnd" => ActionButtonKind.Last,
+                    "actionButtonReturn" => ActionButtonKind.Return,
+                    _ => ActionButtonKind.Custom,
+                };
+                shape.CornerRadius = Math.Round(Math.Min(box.Value.Width, box.Value.Height) * 0.24, 1);
+            }
             Place(shape, box.Value, rot, fh, fv, groupId);
             slide.Elements.Add(shape);
+            Added(shape, sp.NonVisualShapeProperties?.NonVisualDrawingProperties, owner);
         }
 
         private Fill? ReadFill(OpenXmlCompositeElement? spPr, P.ShapeStyle? style, OpenXmlPart owner)
@@ -664,6 +689,7 @@ public static class PptxImporter
             ReadHeads(spPr?.GetFirstChild<A.Outline>(), line);
             Place(line, box.Value, 0, fh, fv, groupId);
             slide.Elements.Add(line);
+            Added(line, cxn.NonVisualConnectionShapeProperties?.NonVisualDrawingProperties, _owner);
         }
 
         private void ReadPicture(P.Picture pic, Slide slide, OpenXmlPart owner, Matrix m, string? groupId)
@@ -671,7 +697,11 @@ public static class PptxImporter
             var box = Box(pic.ShapeProperties?.Transform2D, m, out var rot, out var fh, out var fv);
             if (box == null) return;
             var app = pic.NonVisualPictureProperties?.ApplicationNonVisualDrawingProperties;
-            if (app != null && app.ChildElements.Any(c => c.LocalName is "videoFile" or "audioFile" or "quickTimeFile")) Skip("video or sound");
+            if (app != null && app.ChildElements.Any(c => c.LocalName is "videoFile" or "audioFile" or "quickTimeFile"))
+            {
+                if (ReadMedia(pic, app, slide, owner, box.Value, rot, fh, fv, groupId)) return;
+                Skip("video or sound");
+            }
             var blipFill = pic.BlipFill;
             if (blipFill == null) return;
             var media = ReadBlip(blipFill.Blip, owner);
@@ -700,6 +730,7 @@ public static class PptxImporter
             image.Stroke = ReadStroke(pic.ShapeProperties?.GetFirstChild<A.Outline>(), pic.ShapeStyle);
             Place(image, box.Value, rot, fh, fv, groupId);
             slide.Elements.Add(image);
+            Added(image, pic.NonVisualPictureProperties?.NonVisualDrawingProperties, owner);
         }
 
         private void ReadGroup(P.GroupShape group, Slide slide, Context ctx, OpenXmlPart owner, Matrix m, string? groupId)
@@ -714,7 +745,10 @@ public static class PptxImporter
                 var local = new Matrix(sx, sy, (xfrm.Offset.X?.Value ?? 0) - (xfrm.ChildOffset.X?.Value ?? 0) * sx, (xfrm.Offset.Y?.Value ?? 0) - (xfrm.ChildOffset.Y?.Value ?? 0) * sy);
                 inner = m.Then(local);
             }
-            ReadTree(group, slide, ctx, owner, inner, groupId ?? Ids.New());
+            var id = groupId ?? Ids.New();
+            if (owner is SlidePart && group.NonVisualGroupShapeProperties?.NonVisualDrawingProperties?.Id?.Value is { } gid) _spids[gid] = id;
+            ReadTree(group, slide, ctx, owner, inner, id);
+            _owner = owner;
         }
 
         private void ReadGraphicFrame(P.GraphicFrame frame, Slide slide, OpenXmlPart owner, Matrix m, string? groupId)
@@ -745,6 +779,7 @@ public static class PptxImporter
                 if (firstSize != null) element.FontSize = Size(firstSize.Value);
                 Place(element, box, 0, false, false, groupId);
                 slide.Elements.Add(element);
+                Added(element, frame.NonVisualGraphicFrameProperties?.NonVisualDrawingProperties, owner);
                 return;
             }
             if (uri.EndsWith("/chart", StringComparison.Ordinal))
@@ -755,6 +790,7 @@ public static class PptxImporter
                     chart.Name = name;
                     Place(chart, box, 0, false, false, groupId);
                     slide.Elements.Add(chart);
+                    Added(chart, frame.NonVisualGraphicFrameProperties?.NonVisualDrawingProperties, owner);
                 }
                 else Skip("chart");
                 return;
@@ -942,6 +978,7 @@ public static class PptxImporter
             run.Color = ReadColor(rPr?.GetFirstChild<A.SolidFill>()) is { } c ? Hex(c) : own.Color ?? inherited.Color;
             run.Font = Typeface(rPr?.GetFirstChild<A.LatinFont>()?.Typeface?.Value) ?? own.Font ?? inherited.Font;
             if (run.Bold == false) run.Bold = null;
+            run.Link = ReadLink(rPr?.GetFirstChild<A.HyperlinkOnClick>(), _owner);
             if (run.Italic == false) run.Italic = null;
             return run;
         }
@@ -957,7 +994,7 @@ public static class PptxImporter
                 foreach (var r in p.Runs)
                 {
                     r.Size ??= Size(1800);
-                    r.Color ??= "text";
+                    if (r.Link == null) r.Color ??= "text";
                     r.Font ??= body.Role == TextRole.Title ? _majorFont : _minorFont;
                 }
                 body.LineSpacing ??= 1.2;

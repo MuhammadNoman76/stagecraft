@@ -76,11 +76,20 @@ public sealed partial class SlideCanvas : Grid
     /// <summary>A right-click on the canvas: the editor builds the context menu.</summary>
     public event Action<Point>? ContextRequested;
 
+    /// <summary>The right-click menu of the text being edited is opening (the editor adds link items).</summary>
+    public event Action<System.Windows.Controls.ContextMenu>? TextMenuOpening;
+
     public void Attach(EditorState state)
     {
         _state = state;
-        state.SelectionChanged += () => _overlay.InvalidateVisual();
+        state.SelectionChanged += () =>
+        {
+            _overlay.InvalidateVisual();
+            InvalidateRulers();
+        };
+        state.LiveChange += InvalidateRulers;
         Refresh();
+        ApplyViewAids();
     }
 
     // ------------------------------------------------------------------ coordinates
@@ -171,6 +180,9 @@ public sealed partial class SlideCanvas : Grid
         _shadow.Height = Math.Max(0, size.Height * Zoom);
         _overlay.InvalidateVisual();
         PositionTextEditor();
+        PlaceMediaBar();
+        PlaceCropTools();
+        InvalidateRulers();
         ViewChanged?.Invoke();
     }
 
@@ -189,6 +201,8 @@ public sealed partial class SlideCanvas : Grid
     {
         if (_state == null) return;
         if (IsEditingText && (EditingElement == null || _state.CurrentSlide?.Find(EditingElement.Id) == null)) CancelTextEdit();
+        StopMediaPreview();
+        EndCrop(commit: false);
         var slide = _state.CurrentSlide;
         foreach (var v in _visuals.Values) _stage.Children.Remove(v);
         _visuals.Clear();
@@ -304,7 +318,7 @@ public sealed partial class SlideCanvas : Grid
     public IEnumerable<Handle> GetHandles()
     {
         var state = _state;
-        if (state == null || IsEditingText) yield break;
+        if (state == null || IsEditingText || IsCropping) yield break;
         var selected = state.SelectedElements;
         if (selected.Count == 0 || selected.Any(e => e.Locked)) yield break;
 

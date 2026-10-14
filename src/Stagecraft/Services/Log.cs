@@ -19,8 +19,10 @@ internal static class Log
         {
             lock (Gate)
             {
-                Directory.CreateDirectory(AppSettings.DataDirectory);
-                var file = Path.Combine(AppSettings.DataDirectory, name);
+                // Automated test runs log to the Stagecraft-test-logs folder in %TEMP%, not next to the user's settings.
+                var folder = Views.MainWindow.IsTestOffscreen || CaptureRunner.Running ? Path.Combine(Path.GetTempPath(), "Stagecraft-test-logs") : AppSettings.DataDirectory;
+                Directory.CreateDirectory(folder);
+                var file = Path.Combine(folder, name);
                 if (File.Exists(file) && new FileInfo(file).Length > 1_000_000) File.Delete(file);
                 File.AppendAllText(file, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {text}{Environment.NewLine}{Environment.NewLine}");
             }

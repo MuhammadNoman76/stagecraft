@@ -102,3 +102,47 @@ internal static class Decks
 
     public static string Json(Deck deck) => DeckJson.Serialize(deck);
 }
+
+/// <summary>Points the media cache at a test folder (deleted when the test run ends) before any test runs.</summary>
+internal static class TestSetup
+{
+    public static string MediaRoot { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "stagecraft-tests-media-" + Guid.NewGuid().ToString("N").Substring(0, 10));
+
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void Init()
+    {
+        MediaCache.Root = MediaRoot;
+        // Folders of earlier runs whose clean-up didn't happen (a media file still open at exit, a killed test host).
+        try
+        {
+            foreach (var old in Directory.GetDirectories(System.IO.Path.GetTempPath(), "stagecraft-tests-media-*"))
+                if (Directory.GetLastWriteTimeUtc(old) < DateTime.UtcNow.AddMinutes(-30))
+                    try { Directory.Delete(old, true); } catch { /* in use */ }
+        }
+        catch
+        {
+            // best effort
+        }
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try
+            {
+                if (Directory.Exists(MediaRoot)) Directory.Delete(MediaRoot, true);
+            }
+            catch
+            {
+                // best effort
+            }
+        };
+    }
+}
+
+/// <summary>The small generated media files next to the tests (Media\).</summary>
+internal static class TestMedia
+{
+    public static string File(string name) => System.IO.Path.Combine(AppContext.BaseDirectory, "Media", name);
+
+    public static string Clip => File("test-clip.mp4");
+    public static string Mp3 => File("test-tone.mp3");
+    public static string Wav => File("test-tone.wav");
+}

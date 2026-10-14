@@ -6,7 +6,7 @@
 # Output: dist\Stagecraft-Setup-<version>-<edition>.exe and dist\SHA256SUMS.txt.
 # When every edition is built, the installers and SHA256SUMS.txt are also copied to release\ (the download links point there).
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.1.0",
     [ValidateSet("x64", "arm64", "x86", "legacy")]
     [string[]]$Editions = @("x64", "arm64", "x86", "legacy"),
     [switch]$SkipInstaller,
