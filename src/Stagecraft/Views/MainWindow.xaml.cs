@@ -250,7 +250,11 @@ public partial class MainWindow
             return;
         }
         var placement = AppSettings.Current.Window;
-        if (placement == null || placement.Width < MinWidth || placement.Height < MinHeight) return;
+        if (placement == null || placement.Width < MinWidth || placement.Height < MinHeight)
+        {
+            FitFirstStart();
+            return;
+        }
         var screen = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop, SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
         var rect = new Rect(placement.Left, placement.Top, placement.Width, placement.Height);
         if (!screen.IntersectsWith(rect) || rect.Top < screen.Top - 8) return;
@@ -262,6 +266,34 @@ public partial class MainWindow
         Width = placement.Width;
         Height = placement.Height;
         if (placement.Maximized) WindowState = WindowState.Maximized;
+    }
+
+    /// <summary>
+    /// First start (nothing saved yet): the preferred 1440 × 900 shrinks to fit the main display's work area,
+    /// centred on it, so the title bar is never above the top of the screen. When even the minimum size doesn't
+    /// fit, the window opens maximized. <see cref="Controls.FluentWindow.KeepOnScreen"/> then checks the real display.
+    /// </summary>
+    private void FitFirstStart()
+    {
+        var work = SystemParameters.WorkArea;
+        if (work.Width <= 0 || work.Height <= 0) return;
+        const double margin = 24;
+        var width = Math.Min(Width, work.Width - 2 * margin);
+        var height = Math.Min(Height, work.Height - 2 * margin);
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        if (width < MinWidth || height < MinHeight)
+        {
+            Left = work.Left;
+            Top = work.Top;
+            Width = Math.Min(Width, work.Width);
+            Height = Math.Min(Height, work.Height);
+            WindowState = WindowState.Maximized;
+            return;
+        }
+        Width = width;
+        Height = height;
+        Left = work.Left + (work.Width - width) / 2;
+        Top = work.Top + (work.Height - height) / 2;
     }
 
     // ------------------------------------------------------------------ updates

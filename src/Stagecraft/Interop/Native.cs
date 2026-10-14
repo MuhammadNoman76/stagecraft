@@ -316,6 +316,10 @@ internal static class Native
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
 
+    /// <summary>A window's frame in physical pixels, or null.</summary>
+    public static RECT? WindowRect(IntPtr hwnd) =>
+        hwnd != IntPtr.Zero && GetWindowRect(hwnd, out var rect) && rect.Width > 0 && rect.Height > 0 ? rect : null;
+
     [DllImport("gdi32.dll")]
     private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
 

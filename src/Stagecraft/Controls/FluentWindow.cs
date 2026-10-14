@@ -25,6 +25,41 @@ public class FluentWindow : Window
         TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
         ThemeManager.Changed += OnThemeChanged;
         Closed += (_, _) => ThemeManager.Changed -= OnThemeChanged;
+        Loaded += (_, _) => KeepOnScreen();
+    }
+
+    /// <summary>
+    /// Keeps the whole window, title bar included, on the display it opened on. A window larger than that
+    /// display's work area (a small screen, or high display scaling) is shrunk to fit, or maximized when even its
+    /// minimum size doesn't fit. Windows placed off every display on purpose (the off-screen test mode) are left alone.
+    /// </summary>
+    public void KeepOnScreen()
+    {
+        if (_hwnd == IntPtr.Zero || WindowState != WindowState.Normal) return;
+        var rect = Native.WindowRect(_hwnd);
+        if (rect == null) return;
+        var r = rect.Value;
+        var monitors = Native.Monitors();
+        if (!monitors.Any(m => m.Bounds.Left < r.Right && r.Left < m.Bounds.Right && m.Bounds.Top < r.Bottom && r.Top < m.Bounds.Bottom)) return;
+        var handle = Native.MonitorOf(_hwnd);
+        var monitor = monitors.FirstOrDefault(m => m.Handle == handle);
+        if (monitor == null) return;
+        var work = monitor.WorkArea;
+        var scale = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice.M11 ?? monitor.DpiScale;
+        if (MinWidth * scale > work.Width || MinHeight * scale > work.Height)
+        {
+            if (ResizeMode is ResizeMode.CanResize or ResizeMode.CanResizeWithGrip)
+            {
+                WindowState = WindowState.Maximized;
+                return;
+            }
+        }
+        var width = Math.Min(r.Width, work.Width);
+        var height = Math.Min(r.Height, work.Height);
+        var left = MathEx.Clamp(r.Left, work.Left, work.Right - width);
+        var top = MathEx.Clamp(r.Top, work.Top, work.Bottom - height);
+        if (left == r.Left && top == r.Top && width == r.Width && height == r.Height) return;
+        Native.SetWindowPos(_hwnd, IntPtr.Zero, left, top, width, height, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
     }
 
     /// <summary>Dialog frame: no minimize / maximize buttons, not in the taskbar when it has an owner.</summary>
