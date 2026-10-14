@@ -141,7 +141,7 @@ public sealed class ExportDialog : FluentWindow
                     Radio("size", SizeLabel(3840, " (4K)"), false, () => _choice.PixelWidth = 3840)));
                 break;
             case "pptx":
-                _options.Children.Add(Note("Text, shapes, lines, pictures and tables become editable PowerPoint objects, with your speaker notes and slide size. Charts, icons and the theme's background artwork are exported as pictures. Morph becomes a fade, and build animations aren't exported."));
+                _options.Children.Add(Note("Text, shapes, lines, pictures and tables become editable PowerPoint objects, with your speaker notes and slide size. Animations, links, video and sound come along too; effects PowerPoint doesn't have use the closest match. Charts, icons and the theme's background artwork are exported as pictures, and Morph becomes a fade."));
                 break;
         }
         if (hidden > 0)
